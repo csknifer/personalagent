@@ -35,6 +35,7 @@ function createEmptyLLMStats(): LLMCallStats {
       direct: 0,
       replanning: 0,
       evaluation: 0,
+      discovery: 0,
     },
     byProvider: {},
     totalTokens: { input: 0, output: 0, total: 0 },

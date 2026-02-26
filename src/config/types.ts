@@ -116,6 +116,14 @@ export interface StrategyStoreConfig {
   maxAgeDays: number;
 }
 
+export interface ProgressiveDiscoveryConfig {
+  enabled: boolean;
+  maxWaves: number;
+  waveTimeout: number;
+  totalTimeout: number;
+  stoppingThreshold: number;
+}
+
 export interface HiveConfig {
   queen: QueenConfig;
   worker: WorkerConfig;
@@ -124,6 +132,7 @@ export interface HiveConfig {
   replanning?: ReplanningConfig;
   evaluation?: EvaluationConfig;
   strategyStore?: StrategyStoreConfig;
+  progressiveDiscovery?: ProgressiveDiscoveryConfig;
 }
 
 export interface PromptsConfig {

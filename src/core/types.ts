@@ -122,6 +122,7 @@ export interface TaskPlan {
   type: 'direct' | 'decomposed';
   reasoning: string;
   tasks?: Task[];
+  discoveryMode?: boolean;
 }
 
 // Replanning context types
@@ -227,10 +228,10 @@ export interface WorkerState {
 }
 
 // Phase types for progress tracking
-export type AgentPhase = 'idle' | 'planning' | 'executing' | 'verifying' | 'aggregating' | 'replanning' | 'evaluating';
+export type AgentPhase = 'idle' | 'planning' | 'executing' | 'verifying' | 'aggregating' | 'replanning' | 'evaluating' | 'discovering';
 
 // LLM call purpose for tracking
-export type LLMCallPurpose = 'planning' | 'execution' | 'verification' | 'tool_followup' | 'aggregation' | 'direct' | 'replanning' | 'evaluation';
+export type LLMCallPurpose = 'planning' | 'execution' | 'verification' | 'tool_followup' | 'aggregation' | 'direct' | 'replanning' | 'evaluation' | 'discovery';
 
 // LLM call event details
 export interface LLMCallEvent {
@@ -255,8 +256,30 @@ export interface ToolExecutionEvent {
   resultPreview?: string;
 }
 
+// Progressive Discovery types
+export interface Finding {
+  content: string;
+  source: string;
+  confidence: number;
+  wave: number;
+  tags: string[];
+}
+
+export interface WaveResult {
+  waveNumber: number;
+  tasks: Task[];
+  results: Map<string, TaskResult>;
+  findings: Finding[];
+  duration: number;
+}
+
+export type WaveDecision =
+  | { action: 'continue'; tasks: Task[]; reasoning: string }
+  | { action: 'sufficient'; reasoning: string }
+  | { action: 'pivot'; tasks: Task[]; reasoning: string; abandonedDirections: string[] };
+
 // Event types for CLI updates
-export type AgentEvent = 
+export type AgentEvent =
   | { type: 'message'; message: Message }
   | { type: 'thinking'; content: string }
   | { type: 'worker_spawned'; workerId: string; task: Task }
@@ -272,7 +295,10 @@ export type AgentEvent =
   | { type: 'llm_call'; event: LLMCallEvent }
   | { type: 'replan_triggered'; reason: string; replanNumber: number; cancelledTaskIds: string[] }
   | { type: 'evaluation_complete'; cycleNumber: number; score: number; pass: boolean; feedback?: string }
-  | { type: 'worker_signal'; signal: WorkerSignal };
+  | { type: 'worker_signal'; signal: WorkerSignal }
+  | { type: 'discovery_wave_start'; waveNumber: number; taskCount: number; reasoning: string }
+  | { type: 'discovery_wave_complete'; waveNumber: number; newFindings: string[]; totalFindings: number }
+  | { type: 'discovery_decision'; waveNumber: number; decision: 'continue' | 'sufficient' | 'pivot'; reasoning: string };
 
 export type AgentEventHandler = (event: AgentEvent) => void;
 

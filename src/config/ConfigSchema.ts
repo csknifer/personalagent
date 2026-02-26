@@ -108,6 +108,14 @@ export const StrategyStoreConfigSchema = z.object({
   maxAgeDays: z.number().int().positive().default(30),
 });
 
+export const ProgressiveDiscoveryConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  maxWaves: z.number().int().min(1).max(10).default(4),
+  waveTimeout: z.number().int().positive().default(120000),
+  totalTimeout: z.number().int().positive().default(600000),
+  stoppingThreshold: z.number().int().min(0).default(2),
+});
+
 export const HiveConfigSchema = z.object({
   queen: QueenConfigSchema.default({}),
   worker: WorkerConfigSchema.default({}),
@@ -116,6 +124,7 @@ export const HiveConfigSchema = z.object({
   replanning: ReplanningConfigSchema.default({}),
   evaluation: EvaluationConfigSchema.default({}),
   strategyStore: StrategyStoreConfigSchema.default({}),
+  progressiveDiscovery: ProgressiveDiscoveryConfigSchema.default({}),
 });
 
 export const PromptConfigSchema = z.object({

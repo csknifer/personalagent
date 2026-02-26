@@ -8,7 +8,7 @@
  * automatically as part of dev:web and build:web).
  */
 
-export type AgentPhase = 'idle' | 'planning' | 'executing' | 'verifying' | 'aggregating' | 'replanning' | 'evaluating';
+export type AgentPhase = 'idle' | 'planning' | 'executing' | 'verifying' | 'aggregating' | 'replanning' | 'evaluating' | 'discovering';
 
 export interface MessageMetadata {
   tokenCount?: number;
