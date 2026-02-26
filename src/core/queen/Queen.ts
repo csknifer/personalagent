@@ -12,6 +12,7 @@ import { classifyFast } from './FastClassifier.js';
 import { shouldSynthesizeWithLLM } from './AggregationHeuristic.js';
 import { ToolEffectivenessTracker } from './ToolEffectivenessTracker.js';
 import { StrategyStore } from './StrategyStore.js';
+import type { MemoryStore } from '../memory/MemoryStore.js';
 import type { LLMProvider, ChatOptions, ToolDefinition, ToolCall, TrackedChatOptions, StreamChunk } from '../../providers/index.js';
 import { TrackedProvider, isTrackedProvider, wrapWithTracking } from '../../providers/index.js';
 import type { ResolvedConfig } from '../../config/types.js';
@@ -31,6 +32,7 @@ interface QueenOptions {
   systemPrompt?: string;
   onEvent?: AgentEventHandler;
   strategyStore?: StrategyStore;
+  memoryStore?: MemoryStore;
 }
 
 export class Queen {
@@ -46,6 +48,7 @@ export class Queen {
   private currentSkillContext?: { name: string; instructions: string; resources?: Map<string, string> };
   private toolTracker: ToolEffectivenessTracker = new ToolEffectivenessTracker();
   private strategyStore?: StrategyStore;
+  private memoryStore?: MemoryStore;
 
   constructor(options: QueenOptions) {
     this.provider = options.provider;
@@ -64,6 +67,7 @@ export class Queen {
     });
     this.eventHandler = options.onEvent;
     this.strategyStore = options.strategyStore;
+    this.memoryStore = options.memoryStore;
 
     // Create worker pool with worker provider and MCP tools (fallback to queen provider)
     const workerProvider = options.workerProvider || options.provider;
@@ -126,8 +130,16 @@ export class Queen {
     const log = getDebugLogger();
     log.debug('Queen', 'Planning task', { userMessage: userMessage.slice(0, 100), memoryMessages: this.memory.getMessageCount(), memoryTokens: this.memory.getTotalTokensUsed() });
 
-    const conversationContext = this.buildConversationContext();
+    let conversationContext = this.buildConversationContext();
     const tools = this.mcpServer?.getToolDefinitions();
+
+    // Query relevant memories and prepend to conversation context
+    const memoryContext = await this.queryRelevantMemories(userMessage);
+    if (memoryContext) {
+      const prefix = `## Relevant Memories\n${memoryContext}\n\n`;
+      conversationContext = conversationContext ? prefix + conversationContext : prefix;
+    }
+
     const planOptions = {
       toolNames: tools?.map(t => t.name),
       toolDescriptions: tools?.map(t => t.description),
@@ -186,6 +198,9 @@ export class Queen {
           if (task.result) taskResultsMap.set(task.id, task.result);
         }
         result = await this.runEvaluationLoop(result, userMessage, this.currentTasks, taskResultsMap);
+
+        // Fire-and-forget: write task outcome to memory store
+        this.writeTaskMemory(userMessage, this.currentTasks, taskResultsMap).catch(() => {});
       }
     }
 
@@ -244,6 +259,55 @@ export class Queen {
     }
 
     return lines.length > 0 ? lines.join('\n\n') : undefined;
+  }
+
+  /**
+   * Write a memory note summarizing a successful decomposed task outcome.
+   * Fire-and-forget: errors are logged but never propagate.
+   */
+  private async writeTaskMemory(userMessage: string, tasks: Task[], results: Map<string, TaskResult>): Promise<void> {
+    if (!this.memoryStore) return;
+    try {
+      const successful = [...results.values()].filter(r => r.success);
+      if (successful.length === 0) return;
+
+      const keywords = userMessage.toLowerCase().split(/\s+/).filter(w => w.length > 3).slice(0, 5);
+      const taskSummary = tasks.map(t => t.description).join('; ');
+      const id = `task-${Date.now()}`;
+
+      await this.memoryStore.write({
+        id,
+        content: `Request: ${userMessage}\nDecomposition: ${tasks.length} tasks — ${taskSummary}\nOutcome: ${successful.length}/${tasks.length} succeeded.`,
+        tags: ['task-outcome', ...keywords],
+        source: 'queen-aggregation',
+      });
+    } catch (err) {
+      const log = getDebugLogger();
+      log.warn('Queen', `Failed to write task memory: ${String(err)}`);
+    }
+  }
+
+  /**
+   * Query the MemoryStore for notes relevant to the current user message.
+   * Reinforces accessed memories. Returns empty string if nothing found or on error.
+   */
+  private async queryRelevantMemories(userMessage: string): Promise<string> {
+    if (!this.memoryStore) return '';
+    try {
+      const keywords = userMessage.toLowerCase().split(/\s+/).filter(w => w.length > 3).slice(0, 5);
+      if (keywords.length === 0) return '';
+      const memories = await this.memoryStore.queryByTags(keywords);
+      if (memories.length === 0) return '';
+      const top = memories.slice(0, 3);
+      for (const mem of top) {
+        await this.memoryStore.read(mem.id, { reinforce: true });
+      }
+      return top.map(m => m.content).join('\n---\n');
+    } catch (err) {
+      const log = getDebugLogger();
+      log.warn('Queen', `Failed to query memories: ${String(err)}`);
+      return '';
+    }
   }
 
   /**
@@ -651,6 +715,7 @@ export class Queen {
             exitReason: result.exitReason,
             bestScore: result.bestScore,
             failedTools: result.toolFailures?.map(f => f.tool),
+            failure: result.failure,
           };
 
           if (result.success) {
@@ -927,8 +992,16 @@ ${taskResultsSection}${failedSection}
 
       // Plan the task (with same planOptions as processMessage)
       this.emitPhaseChange('planning', 'Analyzing and planning task...');
-      const conversationContext = this.buildConversationContext();
+      let conversationContext = this.buildConversationContext();
       const tools = this.mcpServer?.getToolDefinitions();
+
+      // Query relevant memories and prepend to conversation context
+      const memoryContext = await this.queryRelevantMemories(userMessage);
+      if (memoryContext) {
+        const prefix = `## Relevant Memories\n${memoryContext}\n\n`;
+        conversationContext = conversationContext ? prefix + conversationContext : prefix;
+      }
+
       const planOptions = {
         toolNames: tools?.map(t => t.name),
         toolDescriptions: tools?.map(t => t.description),
@@ -1036,6 +1109,9 @@ ${taskResultsSection}${failedSection}
             if (task.result) taskResultsMap.set(task.id, task.result);
           }
           result = await this.runEvaluationLoop(result, userMessage, this.currentTasks, taskResultsMap);
+
+          // Fire-and-forget: write task outcome to memory store
+          this.writeTaskMemory(userMessage, this.currentTasks, taskResultsMap).catch(() => {});
         }
 
         fullResponse = result.content;

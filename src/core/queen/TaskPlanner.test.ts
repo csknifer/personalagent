@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { TaskPlanner } from './TaskPlanner.js';
 import { MockProvider } from '../../test/helpers.js';
 import type { Task, TaskStatus, ReplanContext } from '../types.js';
+import { FailureCategory, RecoveryAction } from '../failures.js';
+import type { ClassifiedFailure } from '../failures.js';
 
 function createTask(overrides: Partial<Task> = {}): Task {
   return {
@@ -379,6 +381,143 @@ describe('TaskPlanner', () => {
       const prompt = provider.chatCalls[0].messages[0].content;
       expect(prompt).toContain('read_file');
       expect(prompt).toContain('Research skill active');
+    });
+
+    describe('partial progress preservation', () => {
+      it('should include partial output for tasks with decent progress (bestScore > 0.3)', async () => {
+        provider.defaultResponse = JSON.stringify({ type: 'direct', reasoning: 'ok' });
+
+        await planner.replan(makeReplanContext({
+          failedTasks: [{
+            taskId: 'task-1',
+            description: 'Research AAPL stock',
+            success: false,
+            outputSummary: 'Found current price $182.50 and P/E ratio of 28.3',
+            exitReason: 'stall',
+            bestScore: 0.65,
+          }],
+        }));
+
+        const prompt = provider.chatCalls[0].messages[0].content;
+        expect(prompt).toContain('$182.50');
+        expect(prompt).toContain('build on');
+        expect(prompt).toContain('do NOT restart from scratch');
+        expect(prompt).toContain('65% complete');
+      });
+
+      it('should not include partial output for low-score tasks (bestScore <= 0.3)', async () => {
+        provider.defaultResponse = JSON.stringify({ type: 'direct', reasoning: 'ok' });
+
+        await planner.replan(makeReplanContext({
+          failedTasks: [{
+            taskId: 'task-2',
+            description: 'Research GOOGL stock',
+            success: false,
+            outputSummary: 'Could not find anything',
+            exitReason: 'hopelessness',
+            bestScore: 0.1,
+          }],
+        }));
+
+        const prompt = provider.chatCalls[0].messages[0].content;
+        expect(prompt).not.toContain('build on');
+        expect(prompt).toContain('hopelessness');
+        expect(prompt).toContain('10%');
+      });
+
+      it('should include failure classification details when available', async () => {
+        provider.defaultResponse = JSON.stringify({ type: 'direct', reasoning: 'ok' });
+
+        const failure: ClassifiedFailure = {
+          category: FailureCategory.Strategy,
+          subcategory: 'stall_no_progress',
+          isTransient: false,
+          suggestedRecovery: RecoveryAction.Replan,
+          confidence: 0.9,
+          context: 'Worker stalled after 3 iterations',
+        };
+
+        await planner.replan(makeReplanContext({
+          failedTasks: [{
+            taskId: 'task-3',
+            description: 'Analyze market trends',
+            success: false,
+            outputSummary: 'Identified 3 key trends in semiconductor sector',
+            exitReason: 'stall',
+            bestScore: 0.5,
+            failure,
+          }],
+        }));
+
+        const prompt = provider.chatCalls[0].messages[0].content;
+        expect(prompt).toContain('stall_no_progress (Strategy)');
+        expect(prompt).toContain('Recovery suggestion: Replan');
+        expect(prompt).toContain('50% complete');
+        expect(prompt).toContain('semiconductor sector');
+        expect(prompt).toContain('build on');
+      });
+
+      it('should truncate partial output to 1500 chars', async () => {
+        provider.defaultResponse = JSON.stringify({ type: 'direct', reasoning: 'ok' });
+
+        const longOutput = 'A'.repeat(2000);
+
+        await planner.replan(makeReplanContext({
+          failedTasks: [{
+            taskId: 'task-4',
+            description: 'Long output task',
+            success: false,
+            outputSummary: longOutput,
+            exitReason: 'stall',
+            bestScore: 0.6,
+          }],
+        }));
+
+        const prompt = provider.chatCalls[0].messages[0].content;
+        expect(prompt).toContain('build on');
+        expect(prompt).toContain('[truncated]');
+        // Should not contain the full 2000 chars
+        expect(prompt).not.toContain('A'.repeat(2000));
+      });
+
+      it('should use standard format when bestScore > 0.3 but no output', async () => {
+        provider.defaultResponse = JSON.stringify({ type: 'direct', reasoning: 'ok' });
+
+        await planner.replan(makeReplanContext({
+          failedTasks: [{
+            taskId: 'task-5',
+            description: 'Empty output task',
+            success: false,
+            outputSummary: '',
+            exitReason: 'timeout',
+            bestScore: 0.5,
+          }],
+        }));
+
+        const prompt = provider.chatCalls[0].messages[0].content;
+        // No output means standard format, even with decent score
+        expect(prompt).not.toContain('build on');
+        expect(prompt).toContain('timeout');
+      });
+
+      it('should use standard format at exactly bestScore 0.3', async () => {
+        provider.defaultResponse = JSON.stringify({ type: 'direct', reasoning: 'ok' });
+
+        await planner.replan(makeReplanContext({
+          failedTasks: [{
+            taskId: 'task-6',
+            description: 'Boundary score task',
+            success: false,
+            outputSummary: 'Some partial work',
+            exitReason: 'stall',
+            bestScore: 0.3,
+          }],
+        }));
+
+        const prompt = provider.chatCalls[0].messages[0].content;
+        // Exactly 0.3 should NOT trigger enriched format (> 0.3, not >=)
+        expect(prompt).not.toContain('build on');
+      });
     });
   });
 });

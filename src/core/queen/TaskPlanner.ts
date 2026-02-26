@@ -199,16 +199,37 @@ export class TaskPlanner {
     if (ctx.failedTasks.length > 0) {
       prompt += `### Failed Tasks (need alternative approach)\n`;
       for (const t of ctx.failedTasks) {
-        prompt += `- **${t.description}**\n`;
-        if (t.exitReason) prompt += `  Exit reason: ${t.exitReason}\n`;
-        if (t.bestScore !== undefined) prompt += `  Best score: ${(t.bestScore * 100).toFixed(0)}%\n`;
-        if (t.failedTools && t.failedTools.length > 0) {
-          prompt += `  Failed tools: ${t.failedTools.join(', ')}\n`;
-        }
-        if (t.findings && t.findings.length > 0) {
-          prompt += `  Partial findings:\n${t.findings.map(f => `    - ${f}`).join('\n')}\n`;
-        } else if (t.outputSummary) {
-          prompt += `  Partial output: ${t.outputSummary.slice(0, 300)}\n`;
+        const hasDecentProgress = (t.bestScore !== undefined && t.bestScore > 0.3) && t.outputSummary;
+
+        if (hasDecentProgress) {
+          // Enriched format for tasks with partial progress worth preserving
+          const failureLabel = t.failure
+            ? `${t.failure.subcategory} (${t.failure.category})`
+            : (t.exitReason || 'unknown');
+          const recovery = t.failure?.suggestedRecovery || 'unknown';
+          const truncatedOutput = t.outputSummary.length > 1500
+            ? t.outputSummary.slice(0, 1500) + '\n... [truncated]'
+            : t.outputSummary;
+
+          prompt += `- Task: ${t.description}\n`;
+          prompt += `  Failure: ${failureLabel}\n`;
+          prompt += `  Recovery suggestion: ${recovery}\n`;
+          prompt += `  Progress: ${(t.bestScore! * 100).toFixed(0)}% complete\n`;
+          prompt += `  Partial results (build on these, do NOT restart from scratch):\n`;
+          prompt += `  ${truncatedOutput}\n`;
+        } else {
+          // Standard format for low-progress or no-output failures
+          prompt += `- **${t.description}**\n`;
+          if (t.exitReason) prompt += `  Exit reason: ${t.exitReason}\n`;
+          if (t.bestScore !== undefined) prompt += `  Best score: ${(t.bestScore * 100).toFixed(0)}%\n`;
+          if (t.failedTools && t.failedTools.length > 0) {
+            prompt += `  Failed tools: ${t.failedTools.join(', ')}\n`;
+          }
+          if (t.findings && t.findings.length > 0) {
+            prompt += `  Partial findings:\n${t.findings.map(f => `    - ${f}`).join('\n')}\n`;
+          } else if (t.outputSummary) {
+            prompt += `  Partial output: ${t.outputSummary.slice(0, 300)}\n`;
+          }
         }
       }
       prompt += `\n`;
