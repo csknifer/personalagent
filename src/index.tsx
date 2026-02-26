@@ -39,6 +39,7 @@ program
           skillTracker={result.skillTracker}
           historyManager={result.historyManager}
           strategyStore={result.strategyStore}
+          memoryStore={result.memoryStore}
         />
       );
 

@@ -17,6 +17,7 @@ import { HistoryManager } from './core/HistoryManager.js';
 import { getShutdownManager } from './core/ShutdownManager.js';
 import { getDebugLogger } from './core/DebugLogger.js';
 import { StrategyStore } from './core/queen/StrategyStore.js';
+import { MemoryStore } from './core/memory/MemoryStore.js';
 import type { ResolvedConfig, CLIOptions } from './config/types.js';
 import type { LLMProvider } from './providers/index.js';
 import type { MCPServer } from './mcp/MCPServer.js';
@@ -49,6 +50,7 @@ export interface BootstrapResult {
   historyManager: HistoryManager;
   shutdownManager: ShutdownManager;
   strategyStore: StrategyStore | null;
+  memoryStore: MemoryStore | null;
 }
 
 /**
@@ -123,6 +125,23 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Bootstr
     await strategyStore.load();
   }
 
+  // Initialize cross-session memory store
+  const memoryDir = join(
+    (process.env.HOME || process.env.USERPROFILE || '.'),
+    '.personalagent',
+    'memory',
+  );
+  let memoryStore: MemoryStore | null = null;
+  try {
+    memoryStore = new MemoryStore(memoryDir);
+    // Apply mild decay on startup and prune very weak memories
+    await memoryStore.applyDecay(0.95);
+    await memoryStore.prune(0.05);
+  } catch {
+    // Memory store is non-critical — continue without it
+    memoryStore = null;
+  }
+
   // Set up graceful shutdown
   const shutdownManager = getShutdownManager();
 
@@ -157,5 +176,6 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Bootstr
     historyManager,
     shutdownManager,
     strategyStore,
+    memoryStore,
   };
 }
