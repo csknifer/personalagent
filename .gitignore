@@ -1,0 +1,45 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment (keep .env.example)
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Config with secrets
+config/local.yaml
+
+# Personal agent data
+.personalagent/
+
+# g-search-mcp browser state (Playwright session cookies)
+browser-state-*.json
+browser-state-*-fingerprint.json
+
+# Agent-generated output files
+debugoutput.txt
+
+# Local/personal files
+.claude/settings.local.json
+maleah_anaya_comprehensive_report.md
+claudedesires.txt
+plan.md

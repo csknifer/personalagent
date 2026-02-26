@@ -1,0 +1,103 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Inter:wght@300;400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', monospace;
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --color-surface-0: #09090b;
+  --color-surface-1: #18181b;
+  --color-surface-2: #27272a;
+  --color-surface-3: #3f3f46;
+  --color-border: #27272a;
+  --color-border-bright: #3f3f46;
+  --color-text-primary: #fafafa;
+  --color-text-secondary: #a1a1aa;
+  --color-text-muted: #71717a;
+  --color-accent-teal: #14b8a6;
+  --color-accent-teal-dim: #0d9488;
+  --color-accent-blue: #3b82f6;
+  --color-accent-blue-dim: #2563eb;
+  --color-accent-amber: #f59e0b;
+  --color-accent-amber-dim: #d97706;
+  --color-accent-red: #ef4444;
+  --color-accent-green: #22c55e;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-surface-3) transparent;
+}
+
+body {
+  margin: 0;
+  background: var(--color-surface-0);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Noise texture overlay */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  opacity: 0.015;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-repeat: repeat;
+  background-size: 256px 256px;
+}
+
+/* Code highlighting base */
+pre code.hljs {
+  background: transparent !important;
+  padding: 0 !important;
+}
+
+.hljs {
+  color: #e4e4e7 !important;
+  background: transparent !important;
+}
+
+.hljs-keyword, .hljs-selector-tag { color: #c084fc !important; }
+.hljs-string, .hljs-attr { color: #34d399 !important; }
+.hljs-comment { color: #71717a !important; font-style: italic; }
+.hljs-function .hljs-title, .hljs-title.function_ { color: #60a5fa !important; }
+.hljs-number, .hljs-literal { color: #fb923c !important; }
+.hljs-type, .hljs-built_in { color: #38bdf8 !important; }
+.hljs-variable { color: #f472b6 !important; }
+.hljs-operator { color: #94a3b8 !important; }
+
+/* Blinking cursor animation */
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
+@keyframes pulse-soft {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes slide-in-right {
+  from { transform: translateX(20px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes fade-in-up {
+  from { transform: translateY(8px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.animate-blink { animation: blink 1s step-end infinite; }
+.animate-pulse-soft { animation: pulse-soft 2s ease-in-out infinite; }
+.animate-spin-slow { animation: spin-slow 1.5s linear infinite; }
+.animate-slide-in { animation: slide-in-right 0.3s ease-out; }
+.animate-fade-in-up { animation: fade-in-up 0.3s ease-out; }

@@ -1,0 +1,24 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 0
+    },
+    {
+      "name": "web-server",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["node_modules/tsx/dist/cli.mjs", "src/index.tsx", "serve", "--port", "3100"],
+      "port": 3100
+    },
+    {
+      "name": "web-client",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["node_modules/vite/bin/vite.js", "--host"],
+      "port": 5173,
+      "cwd": "web"
+    }
+  ]
+}
