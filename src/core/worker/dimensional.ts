@@ -78,6 +78,54 @@ export function maskObservations(
 }
 
 /**
+ * Lightweight single-stream score tracker for universal convergence detection.
+ * Usable for any task (single-criterion or aggregated score), unlike
+ * ConvergenceTracker which is multi-criterion.
+ * Pure data structure — no LLM calls.
+ */
+export class ScoreTracker {
+  private _scores: number[] = [];
+
+  /** Append a score to the history */
+  record(score: number): void {
+    this._scores.push(score);
+  }
+
+  /** Returns the max score seen, or 0 if empty */
+  get best(): number {
+    if (this._scores.length === 0) return 0;
+    return Math.max(...this._scores);
+  }
+
+  /**
+   * Returns true if the last 3 scores are within `epsilon` of each other.
+   * Returns false if fewer than 3 scores have been recorded.
+   */
+  isPlateau(epsilon: number = 0.03): boolean {
+    if (this._scores.length < 3) return false;
+    const last3 = this._scores.slice(-3);
+    const max = Math.max(...last3);
+    const min = Math.min(...last3);
+    return (max - min) <= epsilon;
+  }
+
+  /**
+   * Returns true if the last 3 scores are strictly decreasing.
+   * Returns false if fewer than 3 scores have been recorded.
+   */
+  isRegressing(): boolean {
+    if (this._scores.length < 3) return false;
+    const last3 = this._scores.slice(-3);
+    return last3[2] < last3[1] && last3[1] < last3[0];
+  }
+
+  /** Returns the full score history */
+  get scores(): readonly number[] {
+    return this._scores;
+  }
+}
+
+/**
  * Tracks per-criterion convergence across Ralph Loop iterations.
  * Pure data structure — no LLM calls.
  */
