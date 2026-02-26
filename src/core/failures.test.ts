@@ -27,10 +27,10 @@ describe('classifyFailure', () => {
     expect(result.category).toBe(FailureCategory.Strategy);
     expect(result.subcategory).toBe('approach_exhausted');
     expect(result.isTransient).toBe(false);
-    expect(result.suggestedRecovery).toBe(RecoveryAction.Replan);
+    expect(result.suggestedRecovery).toBe(RecoveryAction.EscalateModel);
   });
 
-  it('should escalate model on stall with high score', () => {
+  it('should replan on stall with high score', () => {
     const result = classifyFailure({
       exitReason: 'stall',
       toolFailures: [],
@@ -39,7 +39,7 @@ describe('classifyFailure', () => {
     });
     expect(result.category).toBe(FailureCategory.Strategy);
     expect(result.subcategory).toBe('approach_exhausted');
-    expect(result.suggestedRecovery).toBe(RecoveryAction.EscalateModel);
+    expect(result.suggestedRecovery).toBe(RecoveryAction.Replan);
   });
 
   it('should classify impossible task', () => {

@@ -65,7 +65,7 @@ export function classifyFailure(input: FailureInput): ClassifiedFailure {
         category: FailureCategory.Strategy,
         subcategory: 'approach_exhausted',
         isTransient: false,
-        suggestedRecovery: bestScore > 0.5 ? RecoveryAction.EscalateModel : RecoveryAction.Replan,
+        suggestedRecovery: bestScore > 0.5 ? RecoveryAction.Replan : RecoveryAction.EscalateModel,
         confidence: 0.7,
         context: `Stalled after ${iterations} iterations with best score ${bestScore}`,
       };
