@@ -12,6 +12,7 @@ import { classifyFast } from './FastClassifier.js';
 import { shouldSynthesizeWithLLM } from './AggregationHeuristic.js';
 import { ToolEffectivenessTracker } from './ToolEffectivenessTracker.js';
 import { StrategyStore } from './StrategyStore.js';
+import { DiscoveryCoordinator } from './DiscoveryCoordinator.js';
 import type { MemoryStore } from '../memory/MemoryStore.js';
 import type { LLMProvider, ChatOptions, ToolDefinition, ToolCall, TrackedChatOptions, StreamChunk } from '../../providers/index.js';
 import { TrackedProvider, isTrackedProvider, wrapWithTracking } from '../../providers/index.js';
@@ -19,9 +20,33 @@ import type { ResolvedConfig } from '../../config/types.js';
 import type { MCPServer } from '../../mcp/MCPServer.js';
 import type { SkillLoader, Skill } from '../../skills/SkillLoader.js';
 import { getProgressTracker } from '../progress/ProgressTracker.js';
-import { estimateTokenCount } from '../utils.js';
+import { estimateTokenCount, formatErrorMessage } from '../utils.js';
 import { getDebugLogger } from '../DebugLogger.js';
-import { truncateToolResult } from '../worker/RalphLoop.js';
+import { truncateToolResult, callWithTimeout } from '../worker/RalphLoop.js';
+
+const STREAM_TIMEOUT_MS = 60_000; // 60s per-chunk timeout for streaming
+
+/**
+ * Wraps an async iterable with a per-chunk timeout. If no chunk arrives
+ * within `timeoutMs`, the iteration throws a timeout error.
+ */
+async function* streamWithTimeout<T>(
+  source: AsyncIterable<T>,
+  timeoutMs: number,
+  label: string,
+): AsyncGenerator<T> {
+  const iterator = source[Symbol.asyncIterator]();
+  while (true) {
+    const result = await Promise.race([
+      iterator.next(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`${label} timed out — no response after ${Math.round(timeoutMs / 1000)}s`)), timeoutMs)
+      ),
+    ]);
+    if (result.done) break;
+    yield result.value;
+  }
+}
 
 interface QueenOptions {
   provider: LLMProvider;
@@ -49,6 +74,7 @@ export class Queen {
   private toolTracker: ToolEffectivenessTracker = new ToolEffectivenessTracker();
   private strategyStore?: StrategyStore;
   private memoryStore?: MemoryStore;
+  private discoveryCoordinator?: DiscoveryCoordinator;
 
   constructor(options: QueenOptions) {
     this.provider = options.provider;
@@ -82,6 +108,16 @@ export class Queen {
         this.emitEvent({ type: 'worker_state_change', workerId, state });
       },
     });
+
+    // Create discovery coordinator if enabled
+    const discoveryConfig = options.config.hive.progressiveDiscovery;
+    if (discoveryConfig?.enabled) {
+      this.discoveryCoordinator = new DiscoveryCoordinator({
+        provider: planningProvider,
+        workerPool: this.workerPool,
+        config: discoveryConfig,
+      });
+    }
 
     // Set system prompt with skill awareness
     const baseSystemPrompt = options.systemPrompt || 
@@ -359,9 +395,9 @@ export class Queen {
     try {
       return await this.executeDirectRequest(messages, tools);
     } catch (error) {
-      const err = error instanceof Error ? error : new Error(String(error));
-      this.emitEvent({ type: 'error', error: err.message });
-      throw err;
+      const cleanMessage = formatErrorMessage(error);
+      this.emitEvent({ type: 'error', error: cleanMessage });
+      throw error instanceof Error ? error : new Error(cleanMessage);
     }
   }
 
@@ -391,7 +427,11 @@ export class Queen {
         ? trackedProvider
         : trackedProvider.withPurpose('tool_followup');
       const chatOptions: TrackedChatOptions = { tools, purpose };
-      const response = await provider.chat(currentMessages, chatOptions);
+      const response = await callWithTimeout(
+        provider.chat(currentMessages, chatOptions),
+        STREAM_TIMEOUT_MS,
+        'LLM call',
+      );
 
       finalOutput = response.content;
 
@@ -598,6 +638,36 @@ export class Queen {
           task.strategyHints = strategyHints;
         }
       }
+    }
+
+    // Delegate to DiscoveryCoordinator for multi-wave investigative requests
+    if (plan.discoveryMode && this.discoveryCoordinator) {
+      const tools = this.mcpServer?.getToolDefinitions();
+      const discoveryResult = await this.discoveryCoordinator.execute(
+        originalRequest,
+        plan,
+        {
+          eventHandler: (event) => this.emitEvent(event),
+          skillContext: this.currentSkillContext ? {
+            name: this.currentSkillContext.name,
+            instructions: this.currentSkillContext.instructions,
+            resources: this.currentSkillContext.resources,
+          } : undefined,
+          conversationContext: this.buildConversationContext(),
+          toolNames: tools?.map(t => t.name),
+          toolDescriptions: tools?.map(t => t.description),
+        },
+      );
+
+      // Store discovery result in memory
+      this.memory.addMessage({
+        role: 'assistant',
+        content: discoveryResult.content,
+        timestamp: new Date(),
+      });
+
+      this.emitPhaseChange('idle');
+      return { content: discoveryResult.content, tokenUsage: discoveryResult.tokenUsage };
     }
 
     this.currentTasks = plan.tasks;
@@ -1053,7 +1123,12 @@ ${taskResultsSection}${failedSection}
             ? trackedProvider
             : trackedProvider.withPurpose('tool_followup');
 
-          for await (const chunk of streamProvider.chatStream(currentMessages, { tools, purpose })) {
+          const stream = streamWithTimeout(
+            streamProvider.chatStream(currentMessages, { tools, purpose }),
+            STREAM_TIMEOUT_MS,
+            'LLM streaming call',
+          );
+          for await (const chunk of stream) {
             if (chunk.type === 'text' && chunk.content) {
               fullResponse += chunk.content;
               yield chunk;
@@ -1118,10 +1193,10 @@ ${taskResultsSection}${failedSection}
         yield { type: 'text', content: fullResponse };
       }
     } catch (error) {
-      // On any error, yield it as text so the caller sees it
-      const err = error instanceof Error ? error : new Error(String(error));
-      this.emitEvent({ type: 'error', error: err.message });
-      fullResponse = `Error: ${err.message}`;
+      // On any error, yield a clean human-readable message
+      const cleanMessage = formatErrorMessage(error);
+      this.emitEvent({ type: 'error', error: cleanMessage });
+      fullResponse = `Error: ${cleanMessage}`;
       yield { type: 'text', content: fullResponse };
     }
 
