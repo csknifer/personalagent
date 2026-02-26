@@ -41,17 +41,21 @@ export default function Header({ config, connected, llmStats }: HeaderProps) {
         </div>
       </div>
 
-      {/* Center: Provider info */}
+      {/* Center: Provider info — hidden on small screens, truncated on medium */}
       {config && (
-        <div className="flex items-center gap-4 text-xs font-mono text-text-muted">
-          <div className="flex items-center gap-1.5">
-            <span className="text-text-secondary">queen</span>
-            <span className="text-accent-teal">{config.provider}/{config.model}</span>
+        <div className="hidden sm:flex items-center gap-4 text-xs font-mono text-text-muted min-w-0">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className="text-text-secondary shrink-0">queen</span>
+            <span className="text-accent-teal truncate max-w-[200px]" title={`${config.provider}/${config.model}`}>
+              {config.provider}/{config.model}
+            </span>
           </div>
-          <div className="w-px h-3 bg-border" />
-          <div className="flex items-center gap-1.5">
-            <span className="text-text-secondary">workers</span>
-            <span className="text-accent-amber">{config.workerProvider}/{config.workerModel}</span>
+          <div className="w-px h-3 bg-border shrink-0" />
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className="text-text-secondary shrink-0">workers</span>
+            <span className="text-accent-amber truncate max-w-[200px]" title={`${config.workerProvider}/${config.workerModel}`}>
+              {config.workerProvider}/{config.workerModel}
+            </span>
           </div>
         </div>
       )}

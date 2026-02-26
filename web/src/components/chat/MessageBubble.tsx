@@ -31,6 +31,26 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
     );
   }
 
+  const isError = message.content.startsWith('Error: ');
+
+  // Error message
+  if (isError) {
+    const errorText = message.content.replace(/^Error:\s*/, '');
+    return (
+      <div className="flex justify-start animate-fade-in-up">
+        <div className="max-w-[80%] space-y-1">
+          <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-4 py-3">
+            <div className="flex items-start gap-2">
+              <span className="text-red-400 text-sm mt-0.5 shrink-0">&#9888;</span>
+              <p className="text-sm text-red-300 leading-relaxed">{errorText}</p>
+            </div>
+          </div>
+          <p className="text-[10px] font-mono text-text-muted pl-1">{time}</p>
+        </div>
+      </div>
+    );
+  }
+
   // Assistant message
   return (
     <div className="flex justify-start animate-fade-in-up">
