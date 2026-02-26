@@ -109,6 +109,9 @@ export type SerializedAgentEvent =
   | { type: 'stats_update'; llmStats: LLMCallStats }
   | { type: 'replan_triggered'; reason: string; replanNumber: number; cancelledTaskIds: string[] }
   | { type: 'evaluation_complete'; cycleNumber: number; score: number; pass: boolean; feedback?: string }
+  | { type: 'discovery_wave'; waveNumber: number; status: 'started' | 'completed' | 'decision';
+      taskCount?: number; findings?: string[]; totalFindings?: number;
+      decision?: 'continue' | 'sufficient' | 'pivot'; reasoning?: string }
   | { type: 'error'; error: string };
 
 // ─── Serialization Helpers ──────────────────────────────────────────

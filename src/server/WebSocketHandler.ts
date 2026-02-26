@@ -5,6 +5,7 @@
 
 import type { WebSocket } from 'ws';
 import { Queen } from '../core/queen/Queen.js';
+import { formatErrorMessage } from '../core/utils.js';
 import { getProgressTracker } from '../core/progress/ProgressTracker.js';
 import type { BootstrapResult } from '../bootstrap.js';
 import type {
@@ -207,7 +208,7 @@ export class WebSocketHandler {
       // Clear completed workers
       this.workers = this.workers.filter(w => w.status === 'working' || w.status === 'verifying');
     } catch (error) {
-      const errMsg = error instanceof Error ? error.message : String(error);
+      const errMsg = formatErrorMessage(error);
       this.send({ type: 'error', error: errMsg, messageId });
 
       // Add error message to history
@@ -439,6 +440,45 @@ export class WebSocketHandler {
             score: event.score,
             pass: event.pass,
             feedback: event.feedback,
+          },
+        });
+        break;
+
+      case 'discovery_wave_start':
+        this.send({
+          type: 'agent_event',
+          event: {
+            type: 'discovery_wave',
+            waveNumber: event.waveNumber,
+            status: 'started',
+            taskCount: event.taskCount,
+            reasoning: event.reasoning,
+          },
+        });
+        break;
+
+      case 'discovery_wave_complete':
+        this.send({
+          type: 'agent_event',
+          event: {
+            type: 'discovery_wave',
+            waveNumber: event.waveNumber,
+            status: 'completed',
+            findings: event.newFindings,
+            totalFindings: event.totalFindings,
+          },
+        });
+        break;
+
+      case 'discovery_decision':
+        this.send({
+          type: 'agent_event',
+          event: {
+            type: 'discovery_wave',
+            waveNumber: event.waveNumber,
+            status: 'decision',
+            decision: event.decision,
+            reasoning: event.reasoning,
           },
         });
         break;
