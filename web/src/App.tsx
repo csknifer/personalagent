@@ -17,6 +17,7 @@ export default function App() {
     llmStats,
     connected,
     config,
+    discoveryState,
     sendMessage,
     clearMessages,
   } = useQueenSocket();
@@ -44,7 +45,7 @@ export default function App() {
         </div>
 
         {/* Worker panel — shown when workers exist */}
-        <WorkerPanel workers={workers} phase={phase} llmStats={llmStats} />
+        <WorkerPanel workers={workers} phase={phase} llmStats={llmStats} discoveryState={discoveryState} />
       </div>
 
       {/* Stats bar */}

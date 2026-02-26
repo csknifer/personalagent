@@ -6,9 +6,15 @@ interface WorkerPanelProps {
   workers: SerializedWorkerState[];
   phase: AgentPhase;
   llmStats: LLMCallStats | null;
+  discoveryState?: {
+    active: boolean;
+    currentWave: number;
+    findings: string[];
+    waveHistory: Array<{ wave: number; findingCount: number }>;
+  } | null;
 }
 
-export default function WorkerPanel({ workers, phase, llmStats }: WorkerPanelProps) {
+export default function WorkerPanel({ workers, phase, llmStats, discoveryState }: WorkerPanelProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [allExpanded, setAllExpanded] = useState(false);
 
@@ -22,7 +28,7 @@ export default function WorkerPanel({ workers, phase, llmStats }: WorkerPanelPro
     <div
       className={`
         border-l border-border bg-surface-1/60 flex flex-col transition-all duration-300 animate-slide-in
-        ${collapsed ? 'w-10' : 'w-96'}
+        ${collapsed ? 'w-10' : 'w-80 max-w-[40%]'}
       `}
     >
       {/* Header */}
@@ -97,6 +103,31 @@ export default function WorkerPanel({ workers, phase, llmStats }: WorkerPanelPro
           </button>
         </div>
       </div>
+
+      {/* Discovery wave info */}
+      {!collapsed && discoveryState?.active && (
+        <div className="px-3 py-1.5 border-b border-border bg-surface-2/40">
+          <div className="flex items-center gap-1.5 text-[10px] font-mono">
+            <span className="text-accent-teal font-medium">Discovery Wave {discoveryState.currentWave}</span>
+            <span className="text-text-muted">·</span>
+            <span className="text-text-muted">{discoveryState.findings.length} findings</span>
+          </div>
+          {discoveryState.findings.length > 0 && (
+            <div className="mt-1 space-y-0.5 max-h-24 overflow-y-auto">
+              {discoveryState.findings.slice(-5).map((f, i) => (
+                <div key={i} className="text-[10px] text-text-muted truncate">
+                  • {f}
+                </div>
+              ))}
+              {discoveryState.findings.length > 5 && (
+                <div className="text-[10px] text-text-muted italic">
+                  +{discoveryState.findings.length - 5} more
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Worker list */}
       {!collapsed && (

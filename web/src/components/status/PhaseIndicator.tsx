@@ -12,6 +12,7 @@ const PHASES: { key: AgentPhase; label: string }[] = [
   { key: 'replanning', label: 'Replanning' },
   { key: 'aggregating', label: 'Aggregating' },
   { key: 'evaluating', label: 'Evaluating' },
+  { key: 'discovering', label: 'Discovering' },
 ];
 
 const PHASE_ORDER: Record<AgentPhase, number> = {
@@ -22,6 +23,7 @@ const PHASE_ORDER: Record<AgentPhase, number> = {
   replanning: 3,
   aggregating: 4,
   evaluating: 5,
+  discovering: 6,
 };
 
 export default function PhaseIndicator({ phase, reasoning }: PhaseIndicatorProps) {

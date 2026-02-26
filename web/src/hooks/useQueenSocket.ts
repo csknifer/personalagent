@@ -34,6 +34,12 @@ export interface UseQueenSocketReturn {
   llmStats: LLMCallStats | null;
   connected: boolean;
   config: QueenConfig | null;
+  discoveryState: {
+    active: boolean;
+    currentWave: number;
+    findings: string[];
+    waveHistory: Array<{ wave: number; findingCount: number; reasoning?: string }>;
+  } | null;
   sendMessage: (content: string) => void;
   clearMessages: () => void;
 }
@@ -55,6 +61,12 @@ export function useQueenSocket(url?: string): UseQueenSocketReturn {
   const [llmStats, setLlmStats] = useState<LLMCallStats | null>(null);
   const [connected, setConnected] = useState(false);
   const [config, setConfig] = useState<QueenConfig | null>(null);
+  const [discoveryState, setDiscoveryState] = useState<{
+    active: boolean;
+    currentWave: number;
+    findings: string[];
+    waveHistory: Array<{ wave: number; findingCount: number; reasoning?: string }>;
+  } | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
@@ -143,6 +155,9 @@ export function useQueenSocket(url?: string): UseQueenSocketReturn {
         break;
       case 'phase_change':
         setPhase(event.phase);
+        if (event.phase === 'idle') {
+          setDiscoveryState(null);
+        }
         break;
       case 'worker_spawned':
         // State will be updated via worker_update
@@ -169,6 +184,32 @@ export function useQueenSocket(url?: string): UseQueenSocketReturn {
         setReasoning(
           `Evaluation cycle ${event.cycleNumber}: ${event.pass ? 'passed' : 'failed'} (score: ${(event.score * 100).toFixed(0)}%)${event.feedback ? ` — ${event.feedback}` : ''}`
         );
+        break;
+      case 'discovery_wave':
+        if (event.status === 'started') {
+          setDiscoveryState(prev => ({
+            active: true,
+            currentWave: event.waveNumber,
+            findings: prev?.findings ?? [],
+            waveHistory: prev?.waveHistory ?? [],
+          }));
+          setReasoning(`Discovery Wave ${event.waveNumber}: ${event.reasoning ?? 'Investigating...'}`);
+        } else if (event.status === 'completed') {
+          setDiscoveryState(prev => prev ? {
+            ...prev,
+            findings: [...prev.findings, ...(event.findings ?? [])],
+            waveHistory: [...prev.waveHistory, {
+              wave: event.waveNumber,
+              findingCount: event.findings?.length ?? 0,
+            }],
+          } : null);
+        } else if (event.status === 'decision') {
+          if (event.decision === 'sufficient') {
+            setReasoning(`Investigation complete: ${event.reasoning ?? ''}`);
+          } else {
+            setReasoning(`Wave ${event.waveNumber} → ${event.decision}: ${event.reasoning ?? ''}`);
+          }
+        }
         break;
       case 'error':
         // Could show as toast/notification
@@ -270,6 +311,7 @@ export function useQueenSocket(url?: string): UseQueenSocketReturn {
     setIsProcessing(false);
     setStreamingContent('');
     setStreamingToolCalls([]);
+    setDiscoveryState(null);
     streamAccumulatorRef.current = '';
   }, [send]);
 
@@ -284,6 +326,7 @@ export function useQueenSocket(url?: string): UseQueenSocketReturn {
     llmStats,
     connected,
     config,
+    discoveryState,
     sendMessage,
     clearMessages,
   };
