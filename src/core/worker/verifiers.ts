@@ -7,6 +7,7 @@ import type { DimensionalConfig } from '../../config/types.js';
 import type { LLMProvider, ToolDefinition, ToolCall, TrackedChatOptions } from '../../providers/index.js';
 import type { MCPServer } from '../../mcp/MCPServer.js';
 import type { BudgetGuard } from '../cost/BudgetGuard.js';
+import type { CostRegistry } from '../cost/CostRegistry.js';
 import { getDebugLogger } from '../DebugLogger.js';
 import { callWithTimeout } from './ralphUtils.js';
 
@@ -31,6 +32,8 @@ export interface RalphLoopOptions {
   signal?: AbortSignal;
   /** Budget guard for cost-aware early termination */
   budgetGuard?: BudgetGuard;
+  /** Cost registry for calculating LLM call costs from token usage */
+  costRegistry?: CostRegistry;
 }
 
 export interface RalphLoopContext {

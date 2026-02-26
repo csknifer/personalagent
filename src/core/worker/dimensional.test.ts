@@ -1,3 +1,4 @@
+import { describe, it, expect } from 'vitest';
 import { ScoreTracker } from './dimensional.js';
 
 describe('ScoreTracker', () => {

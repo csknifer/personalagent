@@ -1,3 +1,4 @@
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { MemoryStore } from './MemoryStore.js';
 import { mkdtemp, rm } from 'fs/promises';
 import { tmpdir } from 'os';

@@ -1,3 +1,4 @@
+import { describe, it, expect } from 'vitest';
 import { ToolMemory } from './ToolMemory.js';
 
 describe('ToolMemory', () => {

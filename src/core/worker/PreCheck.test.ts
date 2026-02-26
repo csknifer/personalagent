@@ -1,3 +1,4 @@
+import { describe, it, expect } from 'vitest';
 import { preCheckOutput } from './PreCheck.js';
 
 describe('preCheckOutput', () => {

@@ -1,3 +1,4 @@
+import { describe, it, expect } from 'vitest';
 import { FeedbackTracker } from './StructuredFeedback.js';
 
 describe('FeedbackTracker', () => {

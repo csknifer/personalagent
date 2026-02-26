@@ -1,3 +1,4 @@
+import { describe, it, expect } from 'vitest';
 import { classifyFailure, FailureCategory, RecoveryAction } from './failures.js';
 
 describe('classifyFailure', () => {

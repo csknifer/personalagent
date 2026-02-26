@@ -1281,6 +1281,69 @@ describe('RalphLoop budget awareness', () => {
     expect(result.success).toBe(true);
     expect(result.exitReason).toBeUndefined();
   });
+
+  it('should call recordCost after each iteration when budgetGuard and costRegistry are provided', async () => {
+    const { BudgetGuard } = await import('../cost/BudgetGuard.js');
+    const { CostRegistry } = await import('../cost/CostRegistry.js');
+
+    const budgetGuard = new BudgetGuard({ maxCostPerRequest: 10.0 }); // high limit so it won't exhaust
+    const costRegistry = new CostRegistry();
+
+    const recordCostSpy = vi.spyOn(budgetGuard, 'recordCost');
+    const calculateCostSpy = vi.spyOn(costRegistry, 'calculateCost');
+
+    // Set up token usage on the mock provider
+    provider.defaultTokenUsage = { input: 500, output: 200, total: 700 };
+
+    provider.responses = [
+      'Task completed successfully',
+      JSON.stringify({ complete: true, confidence: 0.95, feedback: '' }),
+    ];
+
+    const task = createTask();
+    const result = await ralphLoop(provider, task, {
+      maxIterations: 5,
+      timeout: 10000,
+      budgetGuard,
+      costRegistry,
+    });
+
+    expect(result.success).toBe(true);
+    // calculateCost should have been called with the provider name, model, and token usage
+    expect(calculateCostSpy).toHaveBeenCalledWith(
+      'mock',         // provider.name from MockProvider
+      'mock-model',   // provider.model from MockProvider
+      expect.objectContaining({ input: expect.any(Number), output: expect.any(Number) }),
+    );
+    // recordCost should have been called at least once (once per iteration)
+    expect(recordCostSpy).toHaveBeenCalled();
+    // The cost should be a number (mock provider is unknown so cost will be 0, but the call still happens)
+    expect(recordCostSpy.mock.calls[0][0]).toBeTypeOf('number');
+  });
+
+  it('should not call recordCost when costRegistry is not provided', async () => {
+    const { BudgetGuard } = await import('../cost/BudgetGuard.js');
+
+    const budgetGuard = new BudgetGuard({ maxCostPerRequest: 10.0 });
+    const recordCostSpy = vi.spyOn(budgetGuard, 'recordCost');
+
+    provider.responses = [
+      'Task completed successfully',
+      JSON.stringify({ complete: true, confidence: 0.95, feedback: '' }),
+    ];
+
+    const task = createTask();
+    const result = await ralphLoop(provider, task, {
+      maxIterations: 5,
+      timeout: 10000,
+      budgetGuard,
+      // no costRegistry
+    });
+
+    expect(result.success).toBe(true);
+    // recordCost should NOT be called when costRegistry is absent
+    expect(recordCostSpy).not.toHaveBeenCalled();
+  });
 });
 
 // =============================================================================

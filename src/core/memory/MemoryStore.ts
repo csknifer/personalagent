@@ -62,10 +62,10 @@ function parseNote(raw: string): MemoryNote {
     id: get('id'),
     tags,
     source: get('source'),
-    strength: parseFloat(get('strength')),
+    strength: parseFloat(get('strength')) || 0,
     createdAt: get('createdAt'),
     lastAccessed: get('lastAccessed'),
-    accessCount: parseInt(get('accessCount'), 10),
+    accessCount: parseInt(get('accessCount'), 10) || 0,
     content,
   };
 }

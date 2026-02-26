@@ -19,6 +19,7 @@ import type { MCPServer } from '../../mcp/MCPServer.js';
 import { getProgressTracker } from '../progress/ProgressTracker.js';
 import { getDebugLogger } from '../DebugLogger.js';
 import type { BudgetGuard } from '../cost/BudgetGuard.js';
+import type { CostRegistry } from '../cost/CostRegistry.js';
 
 // Internal imports from split modules
 import { DEFAULT_CALL_TIMEOUT, DEFAULT_TOOL_TIMEOUT, truncateToolResult, yieldToEventLoop, callWithTimeout, computeStringSimilarity, classifyToolError, extractFindings, extractScratchpad, extractRetentionMarkers, extractSignals } from './ralphUtils.js';
@@ -59,6 +60,7 @@ export async function ralphLoop(
     dimensionalConfig: dclConfig,
     signal,
     budgetGuard,
+    costRegistry,
   } = options;
 
   const startTime = Date.now();
@@ -365,6 +367,16 @@ export async function ralphLoop(
       totalTokens.input += attempt.tokenUsage.input;
       totalTokens.output += attempt.tokenUsage.output;
       totalTokens.total += attempt.tokenUsage.total;
+
+      // Record cost on budget guard if both cost tracking components are wired
+      if (budgetGuard && costRegistry) {
+        const cost = costRegistry.calculateCost(
+          trackedProvider.name,
+          trackedProvider.model,
+          attempt.tokenUsage,
+        );
+        budgetGuard.recordCost(cost);
+      }
     }
 
     // Skip verification if the execution itself failed — no point asking
@@ -913,6 +925,7 @@ export function createRalphLoopRunner(
     callTimeout: options.callTimeout,
     dimensionalConfig: options.dimensionalConfig,
     budgetGuard: options.budgetGuard,
+    costRegistry: options.costRegistry,
   };
 
   return async (task: Task): Promise<TaskResult> => {
