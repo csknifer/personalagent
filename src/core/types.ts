@@ -2,6 +2,8 @@
  * Core types for the Personal Agent system
  */
 
+import type { ClassifiedFailure } from './failures.js';
+
 // Tool call/result types for structured provider communication
 export interface ToolCallInfo {
   id: string;
@@ -82,7 +84,7 @@ export type TaskStatus = 'pending' | 'in_progress' | 'completed' | 'failed' | 'c
 export type FailureExitReason =
   | 'total_tool_failure' | 'hopelessness' | 'stall'
   | 'divergence' | 'timeout' | 'max_iterations'
-  | 'cancelled' | 'execution_error';
+  | 'cancelled' | 'execution_error' | 'budget_exhausted';
 
 export type ToolErrorCategory =
   | 'auth' | 'quota' | 'network' | 'not_found' | 'timeout' | 'unknown';
@@ -105,6 +107,8 @@ export interface TaskResult {
   exitReason?: FailureExitReason;
   /** Highest verifier confidence score achieved (0.0–1.0) */
   bestScore?: number;
+  /** Structured failure classification (only present when !success) */
+  failure?: ClassifiedFailure;
 }
 
 export interface TokenUsage {
@@ -131,6 +135,8 @@ export interface CompletedTaskSummary {
   exitReason?: FailureExitReason;
   bestScore?: number;
   failedTools?: string[];
+  /** Structured failure classification — passed through for partial progress preservation */
+  failure?: ClassifiedFailure;
 }
 
 export interface ReplanContext {

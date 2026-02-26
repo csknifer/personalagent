@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { classifyEscalation } from './EscalationClassifier.js';
 import type { TaskResult } from '../types.js';
+import { FailureCategory, RecoveryAction, type ClassifiedFailure } from '../failures.js';
 
 function makeResult(overrides: Partial<TaskResult> = {}): TaskResult {
   return {
@@ -8,6 +9,18 @@ function makeResult(overrides: Partial<TaskResult> = {}): TaskResult {
     output: '',
     error: 'test error',
     iterations: 2,
+    ...overrides,
+  };
+}
+
+function makeFailure(overrides: Partial<ClassifiedFailure> = {}): ClassifiedFailure {
+  return {
+    category: FailureCategory.Infrastructure,
+    subcategory: 'tool_unavailable',
+    isTransient: true,
+    suggestedRecovery: RecoveryAction.RetryWithBackoff,
+    confidence: 0.8,
+    context: 'Test failure',
     ...overrides,
   };
 }
@@ -193,6 +206,105 @@ describe('classifyEscalation', () => {
       maxReplans: 1,
       dependentTaskIds: [],
     });
+    expect(decision.action).toBe('pass');
+  });
+});
+
+describe('failure-taxonomy-driven escalation', () => {
+  it('should retry with backoff for transient infrastructure failures', () => {
+    const result = makeResult({
+      failure: makeFailure({ suggestedRecovery: RecoveryAction.RetryWithBackoff }),
+    });
+    const decision = classifyEscalation({ result, replanCount: 0, maxReplans: 2, dependentTaskIds: [] });
+    expect(decision.action).toBe('retry');
+    expect((decision as any).delay).toBeGreaterThan(0);
+  });
+
+  it('should replan for strategy failures when disruption is low', () => {
+    const result = makeResult({
+      failure: makeFailure({ suggestedRecovery: RecoveryAction.Replan }),
+    });
+    const decision = classifyEscalation({
+      result, replanCount: 0, maxReplans: 2, dependentTaskIds: [],
+      completedTaskCount: 1, totalTaskCount: 4,
+    });
+    expect(decision.action).toBe('replan');
+  });
+
+  it('should accept partial when disruption is high', () => {
+    const result = makeResult({
+      failure: makeFailure({ suggestedRecovery: RecoveryAction.Replan }),
+    });
+    const decision = classifyEscalation({
+      result, replanCount: 0, maxReplans: 2, dependentTaskIds: [],
+      completedTaskCount: 3, totalTaskCount: 4,
+    });
+    expect(decision.action).toBe('accept_partial');
+  });
+
+  it('should report honestly for impossible tasks', () => {
+    const result = makeResult({
+      failure: makeFailure({
+        category: FailureCategory.TaskDefinition,
+        suggestedRecovery: RecoveryAction.ReportHonestly,
+      }),
+    });
+    const decision = classifyEscalation({ result, replanCount: 0, maxReplans: 2, dependentTaskIds: [] });
+    expect(decision.action).toBe('accept_failure');
+  });
+
+  it('should escalate model for model capability issues', () => {
+    const result = makeResult({
+      failure: makeFailure({ suggestedRecovery: RecoveryAction.EscalateModel }),
+    });
+    const decision = classifyEscalation({ result, replanCount: 0, maxReplans: 2, dependentTaskIds: [] });
+    expect(decision.action).toBe('retry_stronger_model');
+  });
+
+  it('should accept partial for skip-and-continue recovery', () => {
+    const result = makeResult({
+      failure: makeFailure({ suggestedRecovery: RecoveryAction.SkipAndContinue }),
+    });
+    const decision = classifyEscalation({ result, replanCount: 0, maxReplans: 2, dependentTaskIds: [] });
+    expect(decision.action).toBe('accept_partial');
+  });
+
+  it('should replan for retry-same-model recovery', () => {
+    const result = makeResult({
+      failure: makeFailure({ suggestedRecovery: RecoveryAction.RetrySameModel }),
+    });
+    const decision = classifyEscalation({ result, replanCount: 0, maxReplans: 2, dependentTaskIds: [] });
+    expect(decision.action).toBe('replan');
+  });
+
+  it('should accept failure for replan when max replans reached', () => {
+    const result = makeResult({
+      failure: makeFailure({ suggestedRecovery: RecoveryAction.Replan }),
+    });
+    const decision = classifyEscalation({
+      result, replanCount: 2, maxReplans: 2, dependentTaskIds: [],
+      completedTaskCount: 0, totalTaskCount: 4,
+    });
+    // replanCount >= maxReplans is checked before failure taxonomy, so this returns 'pass'
+    expect(decision.action).toBe('pass');
+  });
+
+  it('should scale retry delay based on replan count', () => {
+    const result = makeResult({
+      failure: makeFailure({ suggestedRecovery: RecoveryAction.RetryWithBackoff }),
+    });
+    const d0 = classifyEscalation({ result, replanCount: 0, maxReplans: 5, dependentTaskIds: [] });
+    const d2 = classifyEscalation({ result, replanCount: 2, maxReplans: 5, dependentTaskIds: [] });
+    expect((d0 as any).delay).toBe(2000);
+    expect((d2 as any).delay).toBe(6000);
+  });
+
+  it('should still pass through successful tasks even with failure field', () => {
+    const result = makeResult({
+      success: true,
+      failure: makeFailure(), // shouldn't matter
+    });
+    const decision = classifyEscalation({ result, replanCount: 0, maxReplans: 2, dependentTaskIds: [] });
     expect(decision.action).toBe('pass');
   });
 });

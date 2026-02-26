@@ -6,9 +6,14 @@
  */
 
 import type { TaskResult, ToolErrorCategory } from '../types.js';
+import { RecoveryAction } from '../failures.js';
 
 export type EscalationDecision =
+  | { action: 'retry'; delay: number; reason: string }
+  | { action: 'retry_stronger_model'; reason: string }
   | { action: 'replan'; urgency: 'immediate'; reason: string }
+  | { action: 'accept_partial'; reason: string }
+  | { action: 'accept_failure'; reason: string }
   | { action: 'pass'; reason: string };
 
 export interface EscalationContext {
@@ -16,12 +21,18 @@ export interface EscalationContext {
   replanCount: number;
   maxReplans: number;
   dependentTaskIds: string[];
+  completedTaskCount?: number;
+  totalTaskCount?: number;
 }
 
 /**
  * Classify whether a worker's failure result requires replanning.
  *
- * Decision matrix:
+ * When `result.failure` (ClassifiedFailure) is present, the failure taxonomy
+ * drives richer recovery decisions. Otherwise, falls back to the legacy
+ * decision matrix below.
+ *
+ * Legacy decision matrix:
  * | Exit Reason         | Tool Error Category | Has Dependents | Decision |
  * |---------------------|---------------------|----------------|----------|
  * | success             | —                   | —              | pass     |
@@ -48,6 +59,35 @@ export function classifyEscalation(ctx: EscalationContext): EscalationDecision {
   if (replanCount >= maxReplans) {
     return { action: 'pass', reason: `Replan limit reached (${replanCount}/${maxReplans})` };
   }
+
+  // If failure taxonomy is available, use it for richer decisions
+  if (result.failure) {
+    const completionRatio = (ctx.completedTaskCount ?? 0) / (ctx.totalTaskCount ?? 1);
+    const highDisruption = completionRatio > 0.6;
+
+    switch (result.failure.suggestedRecovery) {
+      case RecoveryAction.RetryWithBackoff:
+        return { action: 'retry', delay: 2000 * (replanCount + 1), reason: result.failure.context };
+      case RecoveryAction.EscalateModel:
+        return { action: 'retry_stronger_model', reason: result.failure.context };
+      case RecoveryAction.Replan:
+        if (highDisruption) {
+          return { action: 'accept_partial', reason: `${result.failure.context}. Not replanning — ${ctx.completedTaskCount}/${ctx.totalTaskCount} tasks complete.` };
+        }
+        if (replanCount >= maxReplans) {
+          return { action: 'accept_failure', reason: `${result.failure.context}. Max replans reached.` };
+        }
+        return { action: 'replan', urgency: 'immediate' as const, reason: result.failure.context };
+      case RecoveryAction.ReportHonestly:
+        return { action: 'accept_failure', reason: result.failure.context };
+      case RecoveryAction.SkipAndContinue:
+        return { action: 'accept_partial', reason: result.failure.context };
+      case RecoveryAction.RetrySameModel:
+        return { action: 'replan', urgency: 'immediate' as const, reason: result.failure.context };
+    }
+  }
+
+  // === Legacy fallback (when result.failure is not present) ===
 
   // Total tool failure — infrastructure broken
   if (result.exitReason === 'total_tool_failure') {
