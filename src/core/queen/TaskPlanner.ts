@@ -75,6 +75,7 @@ For decomposed:
 - Tasks with dependencies: use the "dependencies" array (e.g., task-2 depends on task-1). Only add dependencies when the output of one task is genuinely needed as input for another
 - Consider conversation context for interpreting follow-up references ("also", "that", "those", "it")
 - **estimatedComplexity**: "low" for simple lookups (single search/fetch), "medium" for multi-step research, "high" for deep analysis requiring multiple sources and synthesis
+- **discoveryMode**: Set \`"discoveryMode": true\` in the top-level JSON when the request is investigative — researching a person, company, or topic in depth; competitive analysis; or any request that says "deep research", "investigate", or "full profile". For discovery requests, initial tasks should be BROAD discovery (cast a wide net) rather than targeted deep dives. The system will plan follow-up waves based on findings.
 - When decomposing, include a **conversationSummary** (2-3 sentences of relevant context from conversation history) and **userPreferences** (array of inferred user preferences like "prefers bullet points") in the top-level JSON. Workers have no conversation history — this gives them necessary context.
 `;
 
@@ -418,10 +419,13 @@ export class TaskPlanner {
             };
           });
 
+        const discoveryMode = parsed.discoveryMode === true;
+
         return {
           type: 'decomposed',
           reasoning: String(parsed.reasoning || ''),
           tasks,
+          discoveryMode,
         };
       }
 
