@@ -6,6 +6,7 @@ import type { Message, Task, TaskResult, Verification, Verifier, TokenUsage, Age
 import type { DimensionalConfig } from '../../config/types.js';
 import type { LLMProvider, ToolDefinition, ToolCall, TrackedChatOptions } from '../../providers/index.js';
 import type { MCPServer } from '../../mcp/MCPServer.js';
+import type { BudgetGuard } from '../cost/BudgetGuard.js';
 import { getDebugLogger } from '../DebugLogger.js';
 import { callWithTimeout } from './ralphUtils.js';
 
@@ -28,6 +29,8 @@ export interface RalphLoopOptions {
   dimensionalConfig?: DimensionalConfig;
   /** Abort signal for cooperative cancellation */
   signal?: AbortSignal;
+  /** Budget guard for cost-aware early termination */
+  budgetGuard?: BudgetGuard;
 }
 
 export interface RalphLoopContext {
@@ -59,6 +62,8 @@ export interface RalphLoopContext {
   // Selective observation retention: critical tool results that survive masking
   retainedToolResults: Map<string, string>;
   maxRetainedTokens: number;
+  // Budget awareness
+  budgetStatus?: { percentUsed: number; remaining: number };
 }
 
 /**

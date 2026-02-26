@@ -125,6 +125,17 @@ export function classifyFailure(input: FailureInput): ClassifiedFailure {
         context: `Timed out after ${iterations} iterations`,
       };
 
+    case 'budget_exhausted':
+      return {
+        ...base,
+        category: FailureCategory.Infrastructure,
+        subcategory: 'budget_exhausted',
+        isTransient: false,
+        suggestedRecovery: bestScore > 0.5 ? RecoveryAction.SkipAndContinue : RecoveryAction.ReportHonestly,
+        confidence: 1.0,
+        context: `Budget exhausted after ${iterations} iterations (best: ${bestScore})`,
+      };
+
     case 'cancelled':
       return {
         ...base,

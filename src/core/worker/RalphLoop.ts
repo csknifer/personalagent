@@ -18,6 +18,7 @@ import { TrackedProvider, isTrackedProvider } from '../../providers/index.js';
 import type { MCPServer } from '../../mcp/MCPServer.js';
 import { getProgressTracker } from '../progress/ProgressTracker.js';
 import { getDebugLogger } from '../DebugLogger.js';
+import type { BudgetGuard } from '../cost/BudgetGuard.js';
 
 // Internal imports from split modules
 import { DEFAULT_CALL_TIMEOUT, DEFAULT_TOOL_TIMEOUT, truncateToolResult, yieldToEventLoop, callWithTimeout, computeStringSimilarity, classifyToolError, extractFindings, extractScratchpad, extractRetentionMarkers, extractSignals } from './ralphUtils.js';
@@ -57,6 +58,7 @@ export async function ralphLoop(
     toolTimeout = DEFAULT_TOOL_TIMEOUT,
     dimensionalConfig: dclConfig,
     signal,
+    budgetGuard,
   } = options;
 
   const startTime = Date.now();
@@ -165,6 +167,32 @@ export async function ralphLoop(
         exitReason: 'timeout',
         bestScore: context.bestScore,
       };
+    }
+
+    // Check budget exhaustion
+    if (budgetGuard?.isExhausted()) {
+      log.warn('RalphLoop', 'Budget exhausted — aborting loop', {
+        workerId,
+        iteration: context.iteration,
+        bestScore: context.bestScore,
+      });
+      emitProgress('budget exhausted - returning best result');
+      return {
+        success: false,
+        output: context.bestOutput ?? (context.previousAttempts[context.previousAttempts.length - 1] || ''),
+        findings: context.findings.length > 0 ? context.findings : undefined,
+        error: `Budget exhausted after ${context.iteration} iterations`,
+        iterations: context.iteration,
+        tokenUsage: totalTokens,
+        exitReason: 'budget_exhausted',
+        bestScore: context.bestScore,
+      };
+    }
+
+    // Update budget status on context for iteration prompt
+    if (budgetGuard?.isEnabled()) {
+      const status = budgetGuard.status();
+      context.budgetStatus = { percentUsed: status.percentUsed, remaining: status.remaining };
     }
 
     context.iteration++;
@@ -884,6 +912,7 @@ export function createRalphLoopRunner(
     workerId: options.workerId,
     callTimeout: options.callTimeout,
     dimensionalConfig: options.dimensionalConfig,
+    budgetGuard: options.budgetGuard,
   };
 
   return async (task: Task): Promise<TaskResult> => {

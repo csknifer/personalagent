@@ -145,6 +145,32 @@ describe('classifyFailure', () => {
     expect(result.subcategory).toBe('tool_error');
   });
 
+  it('should classify budget exhaustion as infrastructure', () => {
+    const result = classifyFailure({
+      exitReason: 'budget_exhausted',
+      toolFailures: [],
+      bestScore: 0.3,
+      iterations: 2,
+    });
+    expect(result.category).toBe(FailureCategory.Infrastructure);
+    expect(result.subcategory).toBe('budget_exhausted');
+    expect(result.isTransient).toBe(false);
+    expect(result.confidence).toBe(1.0);
+    expect(result.suggestedRecovery).toBe(RecoveryAction.ReportHonestly);
+  });
+
+  it('should suggest skip-and-continue for budget exhaustion with high score', () => {
+    const result = classifyFailure({
+      exitReason: 'budget_exhausted',
+      toolFailures: [],
+      bestScore: 0.7,
+      iterations: 4,
+    });
+    expect(result.category).toBe(FailureCategory.Infrastructure);
+    expect(result.subcategory).toBe('budget_exhausted');
+    expect(result.suggestedRecovery).toBe(RecoveryAction.SkipAndContinue);
+  });
+
   it('should fall back to unknown for unrecognized exit reasons', () => {
     const result = classifyFailure({
       exitReason: 'something_new',

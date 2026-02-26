@@ -263,6 +263,16 @@ Your previous response contained data that does NOT match your actual tool outpu
 `;
   }
 
+  // Budget awareness: inform worker of remaining resource budget
+  if (context.budgetStatus) {
+    const remainingPct = Math.round(100 - context.budgetStatus.percentUsed);
+    prompt += `## Resource Budget\nBudget: ${remainingPct}% remaining.`;
+    if (remainingPct < 30) {
+      prompt += ' Prioritize completing the most important criteria. Be concise.';
+    }
+    prompt += '\n\n';
+  }
+
   // Instructions: selective focus for DCL, generic otherwise
   if (context.failingCriteria && context.failingCriteria.length > 0) {
     prompt += `## Instructions

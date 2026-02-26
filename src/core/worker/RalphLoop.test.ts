@@ -1182,6 +1182,111 @@ describe('generateDimensionalReflexion', () => {
 // Convergence Tracker Pessimistic Aggregation Tests
 // =============================================================================
 
+// =============================================================================
+// Budget Awareness Tests
+// =============================================================================
+
+describe('RalphLoop budget awareness', () => {
+  let provider: MockProvider;
+
+  beforeEach(() => {
+    provider = new MockProvider();
+    getProgressTracker().reset();
+  });
+
+  it('should abort early when budget is exhausted before first iteration', async () => {
+    const { BudgetGuard } = await import('../cost/BudgetGuard.js');
+    const budgetGuard = new BudgetGuard({ maxCostPerRequest: 0.01 });
+    budgetGuard.recordCost(0.01); // exhaust the budget
+
+    provider.responses = [
+      'Task completed successfully',
+      JSON.stringify({ complete: true, confidence: 0.9, feedback: '' }),
+    ];
+
+    const task = createTask();
+    const result = await ralphLoop(provider, task, {
+      maxIterations: 5,
+      timeout: 10000,
+      budgetGuard,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.exitReason).toBe('budget_exhausted');
+    expect(result.error).toContain('Budget exhausted');
+    expect(result.iterations).toBe(0); // never started an iteration
+  });
+
+  it('should abort after iteration when budget becomes exhausted mid-loop', async () => {
+    const { BudgetGuard } = await import('../cost/BudgetGuard.js');
+    const budgetGuard = new BudgetGuard({ maxCostPerRequest: 0.05 });
+
+    // First iteration: task output + verification rejects
+    provider.responses = [
+      'Partial answer',
+      JSON.stringify({ complete: false, confidence: 0.4, feedback: 'Need more detail' }),
+      // Second iteration responses should not be reached
+      'Complete answer',
+      JSON.stringify({ complete: true, confidence: 0.9, feedback: '' }),
+    ];
+
+    const task = createTask();
+
+    // Exhaust budget after first iteration starts
+    // We'll record cost after a small delay to simulate mid-loop exhaustion
+    // Actually, the simplest approach: record cost right before the second iteration check
+    // Since we can't hook into the loop, we'll exhaust the budget after the first
+    // iteration's verification would have run. The budget check happens at the TOP
+    // of the while loop, so exhausting after the first iteration completes works.
+
+    // Use onProgress to record cost when iteration 1 verification completes
+    let iterationCount = 0;
+    const onProgress = (_iter: number, status: string) => {
+      if (status.startsWith('incomplete')) {
+        iterationCount++;
+        if (iterationCount === 1) {
+          budgetGuard.recordCost(0.05); // exhaust after first iteration
+        }
+      }
+    };
+
+    const result = await ralphLoop(provider, task, {
+      maxIterations: 5,
+      timeout: 10000,
+      budgetGuard,
+      onProgress,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.exitReason).toBe('budget_exhausted');
+    expect(result.iterations).toBe(1); // completed one iteration before budget check
+  });
+
+  it('should not abort when budget guard has no limit set', async () => {
+    const { BudgetGuard } = await import('../cost/BudgetGuard.js');
+    const budgetGuard = new BudgetGuard({}); // no maxCostPerRequest
+
+    provider.responses = [
+      'Task completed successfully',
+      JSON.stringify({ complete: true, confidence: 0.9, feedback: '' }),
+    ];
+
+    const task = createTask();
+    const result = await ralphLoop(provider, task, {
+      maxIterations: 5,
+      timeout: 10000,
+      budgetGuard,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.exitReason).toBeUndefined();
+  });
+});
+
+// =============================================================================
+// Convergence Tracker Pessimistic Aggregation Tests
+// =============================================================================
+
 describe('ConvergenceTracker pessimistic aggregation', () => {
   let tracker: ConvergenceTracker;
 
