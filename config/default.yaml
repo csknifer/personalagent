@@ -90,7 +90,7 @@ hive:
 
   # Progressive Discovery: multi-wave investigative execution for research tasks
   progressiveDiscovery:
-    enabled: false         # opt-in — set to true to enable multi-wave discovery
+    enabled: true          # multi-wave discovery for investigative/research tasks
     maxWaves: 4            # maximum investigation waves per request
     waveTimeout: 120000    # per-wave timeout in ms (2 minutes)
     totalTimeout: 600000   # all waves combined in ms (10 minutes)

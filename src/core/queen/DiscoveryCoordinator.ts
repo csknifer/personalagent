@@ -17,7 +17,6 @@ import type {
   Finding,
   WaveResult,
   WaveDecision,
-  TokenUsage,
   AgentEventHandler,
   SkillContext,
   Message,
@@ -42,7 +41,6 @@ export interface DiscoveryResult {
   findings: Finding[];
   waveCount: number;
   waveHistory: WaveResult[];
-  tokenUsage?: TokenUsage;
 }
 
 export class DiscoveryCoordinator {
@@ -66,7 +64,6 @@ export class DiscoveryCoordinator {
     const waveHistory: WaveResult[] = [];
     const abandonedDirections: string[] = [];
     const totalStart = Date.now();
-    let totalTokens: TokenUsage = { input: 0, output: 0, total: 0 };
 
     // Phase: discovering
     eventHandler({ type: 'phase_change', phase: 'discovering', description: 'Starting progressive discovery' });
@@ -103,9 +100,14 @@ export class DiscoveryCoordinator {
         }
       }
 
-      // Execute wave
+      // Execute wave with per-wave timeout
       const waveStart = Date.now();
-      const results = await this.workerPool.executeTasks(currentTasks);
+      const results = await Promise.race([
+        this.workerPool.executeTasks(currentTasks),
+        new Promise<Map<string, TaskResult>>((_, reject) =>
+          setTimeout(() => reject(new Error(`Wave ${wave} timed out after ${this.config.waveTimeout}ms`)), this.config.waveTimeout)
+        ),
+      ]).catch(() => new Map<string, TaskResult>());
       const waveDuration = Date.now() - waveStart;
 
       // Collect findings from results
@@ -149,9 +151,6 @@ export class DiscoveryCoordinator {
       // Ask LLM: plan next wave
       const decision = await this.planNextWave(request, allFindings, waveHistory, abandonedDirections);
 
-      // Track tokens from planning call
-      // (token tracking would come from TrackedProvider if wired)
-
       // Emit decision
       eventHandler({
         type: 'discovery_decision',
@@ -184,7 +183,6 @@ export class DiscoveryCoordinator {
       findings: allFindings,
       waveCount: waveHistory.length,
       waveHistory,
-      tokenUsage: totalTokens.total > 0 ? totalTokens : undefined,
     };
   }
 

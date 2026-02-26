@@ -667,7 +667,7 @@ export class Queen {
       });
 
       this.emitPhaseChange('idle');
-      return { content: discoveryResult.content, tokenUsage: discoveryResult.tokenUsage };
+      return { content: discoveryResult.content };
     }
 
     this.currentTasks = plan.tasks;
