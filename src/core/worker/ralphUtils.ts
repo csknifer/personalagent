@@ -196,3 +196,72 @@ export function extractSignals(
 
   return signals;
 }
+
+/** Max scratchpad length in a summary */
+const SUMMARY_SCRATCHPAD_MAX = 300;
+
+/** Fallback head/tail size when no structured sections found */
+const FALLBACK_CHUNK_SIZE = 200;
+
+/**
+ * Compress a raw iteration output into a compact summary.
+ * Reduces self-conditioning from prior error traces by extracting only
+ * the essential information: findings, tool outcomes, and scratchpad notes.
+ *
+ * Returns the input unchanged if it's already short (under 500 chars).
+ */
+export function summarizeIteration(output: string): string {
+  if (!output) return '';
+  if (output.length < 300) return output;
+
+  const parts: string[] = [];
+
+  // 1. Extract KEY FINDINGS section (verbatim)
+  const findingsMatch = output.match(/## KEY FINDINGS\s*\n([\s\S]*?)(?=\n## |\n```|$)/i);
+  if (findingsMatch) {
+    parts.push('## KEY FINDINGS\n' + findingsMatch[1].trim());
+  }
+
+  // 2. Extract tool call outcomes
+  const toolPattern = /Tool call:\s*(\w+)\(([^)]*)\)/gi;
+  const toolOutcomes: string[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = toolPattern.exec(output)) !== null) {
+    const toolName = match[1];
+    const args = match[2];
+    // Look at the text after the tool call (up to 500 chars or next tool call) for error signals
+    const afterIndex = match.index + match[0].length;
+    const afterText = output.slice(afterIndex, afterIndex + 500).toLowerCase();
+    const failed = /error|failed|unavailable|rate.?limit|timed?\s*out/.test(afterText.split(/tool call:/i)[0]);
+    toolOutcomes.push(`${toolName}(${args}): ${failed ? 'FAILED' : 'OK'}`);
+  }
+  if (toolOutcomes.length > 0) {
+    parts.push('Tools: ' + toolOutcomes.join(', '));
+  }
+
+  // 3. Extract SCRATCHPAD (first N chars)
+  const scratchpadMatch = output.match(/## SCRATCHPAD\s*\n([\s\S]*?)(?=\n## |\n```|$)/i);
+  if (scratchpadMatch) {
+    const scratchpad = scratchpadMatch[1].trim();
+    parts.push('## SCRATCHPAD\n' + scratchpad.slice(0, SUMMARY_SCRATCHPAD_MAX));
+  }
+
+  // 4. Fallback — if no structured sections found, take head + tail of cleaned text
+  if (parts.length === 0) {
+    // Strip code blocks and large JSON blobs
+    const cleaned = output
+      .replace(/```[\s\S]*?```/g, '')
+      .replace(/\{[\s\S]{50,}?\}/g, '')
+      .trim();
+
+    const text = cleaned || output.trim();
+    if (text.length <= FALLBACK_CHUNK_SIZE * 2 + 20) {
+      return text;
+    }
+    const head = text.slice(0, FALLBACK_CHUNK_SIZE).trim();
+    const tail = text.slice(-FALLBACK_CHUNK_SIZE).trim();
+    return head + '\n...\n' + tail;
+  }
+
+  return parts.join('\n\n');
+}
