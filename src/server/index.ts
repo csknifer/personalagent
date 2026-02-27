@@ -5,9 +5,16 @@
 
 import { createServer } from 'http';
 import { readFile, stat } from 'fs/promises';
-import { join, extname } from 'path';
+import { join, extname, resolve, sep } from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
+
+/** Returns true if filePath is inside (or equal to) dir, after resolving both. */
+export function isPathInsideDir(filePath: string, dir: string): boolean {
+  const resolvedPath = resolve(filePath);
+  const resolvedDir = resolve(dir);
+  return resolvedPath === resolvedDir || resolvedPath.startsWith(resolvedDir + sep);
+}
 import { WebSocketServer } from 'ws';
 import { WebSocketHandler } from './WebSocketHandler.js';
 import type { BootstrapResult } from '../bootstrap.js';
@@ -125,6 +132,13 @@ export async function startServer(
 
     try {
       let filePath = join(staticDir, url.pathname === '/' ? 'index.html' : url.pathname);
+
+      // Guard against path traversal
+      if (!isPathInsideDir(filePath, staticDir)) {
+        res.writeHead(403, { 'Content-Type': 'text/plain' });
+        res.end('Forbidden');
+        return;
+      }
 
       // Check if file exists
       const fileStat = await stat(filePath).catch(() => null);
