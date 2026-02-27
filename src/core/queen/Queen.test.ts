@@ -274,4 +274,30 @@ describe('Queen', () => {
       expect(stats).toHaveProperty('maxWorkers');
     });
   });
+
+  describe('system prompt selection', () => {
+    it('should use delegation-aware default prompt when no config prompt is set', () => {
+      const { queen } = createTestQueen();
+      const messages = queen.getMemory().getMessages();
+      const systemMsg = messages.find(m => m.role === 'system');
+      expect(systemMsg).toBeDefined();
+      expect(systemMsg!.content).toContain('delegate_tasks');
+      expect(systemMsg!.content).toContain('Delegation Quality');
+      expect(systemMsg!.content).toContain('Result Synthesis');
+    });
+
+    it('should use config prompt when prompts.queen.system is set', () => {
+      const config = createMockConfig({
+        prompts: { queen: { system: 'Custom queen prompt' } },
+      });
+      const queen = new Queen({
+        provider: new MockProvider(),
+        config,
+        onEvent: () => {},
+      });
+      const messages = queen.getMemory().getMessages();
+      const systemMsg = messages.find(m => m.role === 'system');
+      expect(systemMsg!.content).toBe('Custom queen prompt');
+    });
+  });
 });
