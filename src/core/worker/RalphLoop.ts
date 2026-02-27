@@ -622,7 +622,9 @@ async function executeIterationWithTools(
       `LLM call (iteration ${context.iteration})`,
       signal
     );
-    let totalTokens = response.tokenUsage || { input: 0, output: 0, total: 0 };
+    let totalTokens = response.tokenUsage
+      ? { ...response.tokenUsage }
+      : { input: 0, output: 0, total: 0 };
 
     // Accumulate ALL meaningful content across tool rounds (not just the last message)
     const contentParts: string[] = [];
