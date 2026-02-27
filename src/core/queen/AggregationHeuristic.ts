@@ -6,6 +6,8 @@
  * with no overlap, synthesis is just concatenation with headers.
  */
 
+import type { KnowledgeGraph } from '../knowledge/KnowledgeGraph.js';
+
 // Common English stopwords to filter out when comparing content
 const STOPWORDS = new Set([
   'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
@@ -41,9 +43,18 @@ export interface TaskResultForAggregation {
 export function shouldSynthesizeWithLLM(
   taskResults: TaskResultForAggregation[],
   overlapThreshold: number = 0.15,
+  graph?: KnowledgeGraph,
 ): AggregationDecision {
   if (taskResults.length < 2) {
     return { shouldSynthesize: false, reason: 'single result' };
+  }
+
+  // If knowledge graph has cross-entity relationships, always synthesize
+  if (graph) {
+    const stats = graph.getStats();
+    if (stats.relationshipCount > 0) {
+      return { shouldSynthesize: true, reason: `knowledge graph has ${stats.relationshipCount} cross-entity relationships` };
+    }
   }
 
   // If any task has dependencies on another, results are interrelated → always synthesize

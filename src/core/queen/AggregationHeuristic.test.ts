@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { shouldSynthesizeWithLLM } from './AggregationHeuristic.js';
+import { KnowledgeGraph } from '../knowledge/KnowledgeGraph.js';
 
 describe('AggregationHeuristic', () => {
   describe('shouldSynthesizeWithLLM', () => {
@@ -48,6 +49,31 @@ describe('AggregationHeuristic', () => {
       // With a very low threshold, synthesize
       const lowThreshold = shouldSynthesizeWithLLM(results, 0.01);
       expect(lowThreshold.shouldSynthesize).toBe(true);
+    });
+
+    it('returns true when graph has cross-entity relationships', () => {
+      const graph = new KnowledgeGraph();
+      graph.merge(
+        [
+          { name: 'Acme', type: 'organization', properties: {}, confidence: 0.8 },
+          { name: 'Jane', type: 'person', properties: {}, confidence: 0.9 },
+        ],
+        [{ source: 'Jane', target: 'Acme', predicate: 'founded', evidence: 'Jane founded Acme', weight: 0.9 }],
+        1,
+        ['w1-task-1'],
+      );
+
+      // Even with disjoint text, graph relationships force synthesis
+      const result = shouldSynthesizeWithLLM(
+        [
+          { description: 'Get weather', output: 'It is sunny', dependencies: [] },
+          { description: 'Get stocks', output: 'AAPL is up', dependencies: [] },
+        ],
+        0.15,
+        graph,
+      );
+      expect(result.shouldSynthesize).toBe(true);
+      expect(result.reason).toContain('knowledge graph');
     });
   });
 });
