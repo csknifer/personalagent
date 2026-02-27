@@ -688,7 +688,8 @@ async function executeIterationWithTools(
     // Handle tool calls with multi-round support (max 5 tool rounds per iteration)
     let currentResponse = response;
     let toolRound = 0;
-    const maxToolRounds = 3;
+    // Iteration 1 gets full tool access; iteration 2+ gets 1 round for gap-filling only
+    const maxToolRounds = context.iteration <= 1 ? 3 : 1;
 
     while (currentResponse.toolCalls && currentResponse.toolCalls.length > 0 && mcpServer && toolRound < maxToolRounds) {
       toolRound++;
