@@ -103,6 +103,7 @@ export class OllamaProvider extends LLMProvider {
       options: {
         temperature: options?.temperature ?? this.defaultTemperature,
       },
+      tools: this.convertTools(options?.tools) as undefined,
       stream: true,
     });
 
@@ -130,8 +131,10 @@ export class OllamaProvider extends LLMProvider {
   }
 
   supportsTools(): boolean {
-    // Not all Ollama models support tools
-    return ['llama3', 'mistral'].includes(this.model);
+    // Not all Ollama models support tools — match base name before the ':' tag
+    const base = this.model.split(':')[0].toLowerCase();
+    const toolCapableModels = ['llama3', 'llama3.1', 'llama3.2', 'llama3.3', 'mistral', 'mixtral', 'qwen2.5', 'command-r'];
+    return toolCapableModels.some(m => base === m || base.startsWith(m + '.'));
   }
 
   getAvailableModels(): string[] {

@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { convertMessagesToOllama } from './OllamaProvider.js';
+import { convertMessagesToOllama, OllamaProvider } from './OllamaProvider.js';
 import type { Message } from '../core/types.js';
 
 describe('convertMessagesToOllama', () => {
@@ -68,5 +68,86 @@ describe('convertMessagesToOllama', () => {
     ];
     const result = convertMessagesToOllama(messages);
     expect(result[0].content).toBe('Here are results');
+  });
+});
+
+describe('OllamaProvider.supportsTools', () => {
+  it('returns true for exact base model names', () => {
+    const provider = new OllamaProvider({ model: 'llama3' });
+    expect(provider.supportsTools()).toBe(true);
+  });
+
+  it('returns true for model names with version tags', () => {
+    const provider = new OllamaProvider({ model: 'llama3.1:8b' });
+    expect(provider.supportsTools()).toBe(true);
+  });
+
+  it('returns true for mistral:latest', () => {
+    const provider = new OllamaProvider({ model: 'mistral:latest' });
+    expect(provider.supportsTools()).toBe(true);
+  });
+
+  it('returns true for qwen2.5', () => {
+    const provider = new OllamaProvider({ model: 'qwen2.5:14b' });
+    expect(provider.supportsTools()).toBe(true);
+  });
+
+  it('returns true for mixtral', () => {
+    const provider = new OllamaProvider({ model: 'mixtral:8x7b' });
+    expect(provider.supportsTools()).toBe(true);
+  });
+
+  it('returns true for command-r', () => {
+    const provider = new OllamaProvider({ model: 'command-r:latest' });
+    expect(provider.supportsTools()).toBe(true);
+  });
+
+  it('returns false for models without tool support', () => {
+    const provider = new OllamaProvider({ model: 'codellama:7b' });
+    expect(provider.supportsTools()).toBe(false);
+  });
+
+  it('returns false for unknown models', () => {
+    const provider = new OllamaProvider({ model: 'phi3:mini' });
+    expect(provider.supportsTools()).toBe(false);
+  });
+
+  it('handles uppercase model names', () => {
+    const provider = new OllamaProvider({ model: 'Llama3:8b' });
+    expect(provider.supportsTools()).toBe(true);
+  });
+});
+
+describe('OllamaProvider.chatStream tools passthrough', () => {
+  it('passes tools to the Ollama client in streaming mode', async () => {
+    const provider = new OllamaProvider({ model: 'llama3' });
+
+    // Capture the args passed to client.chat
+    let capturedArgs: Record<string, unknown> | undefined;
+    const fakeStream = (async function* () {
+      yield { message: { content: 'hello', tool_calls: undefined } };
+    })();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (provider as any).client = {
+      chat: async (args: Record<string, unknown>) => {
+        capturedArgs = args;
+        return fakeStream;
+      },
+    };
+
+    const tools = [
+      { name: 'test_tool', description: 'A test tool', parameters: { type: 'object', properties: {} } },
+    ];
+
+    const stream = provider.chatStream([], { tools });
+    // Consume the stream to trigger the call
+    for await (const _chunk of stream) { /* drain */ }
+
+    expect(capturedArgs).toBeDefined();
+    expect(capturedArgs!.tools).toBeDefined();
+    expect((capturedArgs!.tools as unknown[])[0]).toEqual({
+      type: 'function',
+      function: { name: 'test_tool', description: 'A test tool', parameters: { type: 'object', properties: {} } },
+    });
   });
 });
