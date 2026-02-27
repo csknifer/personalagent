@@ -174,8 +174,11 @@ export class SkillLoader {
         const scripts = await readdir(scriptsPath);
         for (const script of scripts) {
           const scriptPath = join(scriptsPath, script);
-          const scriptContent = await readFile(scriptPath, 'utf-8');
-          skill.scripts.set(script, scriptContent);
+          const stats = await stat(scriptPath);
+          if (stats.isFile()) {
+            const scriptContent = await readFile(scriptPath, 'utf-8');
+            skill.scripts.set(script, scriptContent);
+          }
         }
       }
 

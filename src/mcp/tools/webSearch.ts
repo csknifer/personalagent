@@ -139,6 +139,15 @@ export function isPrivateHost(hostname: string): boolean {
   // IPv6 loopback
   if (lower === '::1' || lower === '0:0:0:0:0:0:0:1') return true;
 
+  // IPv6 link-local (fe80::/10)
+  if (lower.startsWith('fe80:') || lower.startsWith('fe80%')) return true;
+
+  // IPv6 unique-local (fc00::/7 — covers fc00:: and fd00::)
+  if (lower.startsWith('fc') || lower.startsWith('fd')) {
+    // Verify it's actually an IPv6 address (contains ':')
+    if (lower.includes(':')) return true;
+  }
+
   // IPv4-mapped IPv6 (e.g. ::ffff:127.0.0.1 or ::ffff:7f00:1)
   const mappedMatch = lower.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
   if (mappedMatch) {

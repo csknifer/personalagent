@@ -51,6 +51,10 @@ export class WebSocketHandler {
   // Activity log per worker (keyed by workerId)
   private workerActivityLogs: Map<string, WorkerLogEntry[]> = new Map();
 
+  // Initialization gate — resolves when history is loaded and state is ready
+  private readyPromise: Promise<void>;
+  private resolveReady!: () => void;
+
   // Throttling for high-frequency events
   private throttleMs: number;
   private pendingWorkers: WorkerState[] | null = null;
@@ -62,6 +66,7 @@ export class WebSocketHandler {
     this.bootstrap = bootstrap;
     this.throttleMs = bootstrap.config.server.eventThrottleMs;
     this.sessionId = crypto.randomUUID();
+    this.readyPromise = new Promise<void>((resolve) => { this.resolveReady = resolve; });
 
     this.queen = new Queen({
       provider: bootstrap.queenProvider,
@@ -87,13 +92,16 @@ export class WebSocketHandler {
             }
           }
           this.sendStateSnapshot();
+          this.resolveReady();
         });
       } else {
         // Another connection already owns history — start fresh
         this.sendStateSnapshot();
+        this.resolveReady();
       }
     } else {
       this.sendStateSnapshot();
+      this.resolveReady();
     }
   }
 
@@ -113,7 +121,8 @@ export class WebSocketHandler {
       this.cleanup();
     });
 
-    this.ws.on('error', () => {
+    this.ws.on('error', (err) => {
+      console.warn(`WebSocket error (session ${this.sessionId}):`, err.message ?? err);
       this.cleanup();
     });
   }
@@ -149,6 +158,9 @@ export class WebSocketHandler {
   }
 
   private async handleSendMessage(messageId: string, content: string): Promise<void> {
+    // Wait for initialization (history loading) to complete before processing
+    await this.readyPromise;
+
     if (this.isProcessing) {
       this.send({ type: 'error', error: 'Already processing a message', messageId });
       return;

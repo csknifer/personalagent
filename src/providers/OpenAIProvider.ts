@@ -173,10 +173,15 @@ export class OpenAIProvider extends LLMProvider {
               name: tc.function?.name || '',
               arguments: tc.function?.arguments || '',
             });
-          } else if (tc.function?.arguments) {
+          } else {
             const existing = activeToolCalls.get(index);
             if (existing) {
-              existing.arguments += tc.function.arguments;
+              if (tc.function?.name) {
+                existing.name = tc.function.name;
+              }
+              if (tc.function?.arguments) {
+                existing.arguments += tc.function.arguments;
+              }
             }
           }
         }

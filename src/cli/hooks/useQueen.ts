@@ -125,7 +125,7 @@ export function useQueen({
       queen.shutdown();
       getShutdownManager().unregister('queen');
     };
-  }, [queenProvider, workerProvider, mcpServer, config, skillLoader, historyManager]);
+  }, [queenProvider, workerProvider, mcpServer, config, skillLoader, historyManager, strategyStore, memoryStore]);
 
   // --- Throttled event handling ---
   // Buffer high-frequency updates and flush to React state at most every 250ms
@@ -355,8 +355,8 @@ export function useQueen({
       // Mark history dirty after successful response
       historyManager?.markDirty();
 
-      // Clear completed workers
-      setWorkers(prev => prev.filter(w => w.status === 'working'));
+      // Clear completed workers (keep working and verifying, matching server behavior)
+      setWorkers(prev => prev.filter(w => w.status === 'working' || w.status === 'verifying'));
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
       onError?.(err);

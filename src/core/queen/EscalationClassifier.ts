@@ -71,7 +71,7 @@ export function classifyEscalation(ctx: EscalationContext): EscalationDecision {
 
   // If failure taxonomy is available, use it for richer decisions
   if (result.failure) {
-    const completionRatio = (ctx.completedTaskCount ?? 0) / (ctx.totalTaskCount ?? 1);
+    const completionRatio = (ctx.completedTaskCount ?? 0) / (ctx.totalTaskCount || 1);
     const highDisruption = completionRatio > 0.6;
 
     switch (result.failure.suggestedRecovery) {
