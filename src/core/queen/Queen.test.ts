@@ -138,6 +138,59 @@ describe('Queen', () => {
     });
   });
 
+  describe('processMessage() — delegate_tasks interception', () => {
+    it('intercepts delegate_tasks tool call and dispatches to DelegateTasksHandler', async () => {
+      const provider = new MockProvider({
+        responses: [
+          // 1: TaskPlanner.plan() → direct
+          JSON.stringify({ type: 'direct', reasoning: 'Research task' }),
+          // 2: handleDirectRequest chat() → Queen decides to delegate (tool call)
+          'I will research this for you.',
+          // 3: Worker 1 execution (ralphLoop chat)
+          'Found social media profiles for John Doe.',
+          // 4: Worker 1 verification (LLMVerifier complete())
+          JSON.stringify({ complete: true, confidence: 1.0 }),
+          // 5: handleDirectRequest follow-up chat() → Queen synthesizes
+          'Based on my research, John Doe has active social media profiles.',
+        ],
+        supportsTools: true,
+      });
+
+      // Queue tool calls per chat() call
+      provider.toolCallsQueue = [
+        undefined, // plan call — no tools
+        [{ id: 'tc-1', name: 'delegate_tasks', arguments: {
+          tasks: [
+            { description: 'Search social media for John Doe', successCriteria: 'Find profiles' },
+          ],
+        }}],
+        undefined, // worker chat — no tool calls
+        undefined, // worker verification — no tool calls
+        undefined, // Queen follow-up — no tools
+      ];
+
+      const mcpServer = new MockMCPServer({
+        toolDefinitions: [
+          { name: 'web_search', description: 'Search', parameters: {} },
+        ],
+      });
+
+      const events: AgentEvent[] = [];
+      const { queen } = createTestQueen({ provider, mcpServer, events });
+      const result = await queen.processMessage('Research John Doe');
+
+      // delegate_tasks should NOT be sent to MCP
+      expect(mcpServer.executeCalls.filter(c => c.name === 'delegate_tasks')).toHaveLength(0);
+
+      // Worker events should be emitted
+      expect(events.some(e => e.type === 'worker_spawned')).toBe(true);
+      expect(events.some(e => e.type === 'worker_completed')).toBe(true);
+
+      // Queen should produce a response
+      expect(result).toContain('research');
+    });
+  });
+
   describe('processMessage() — decomposed path', () => {
     it('should decompose into tasks, execute workers, and aggregate', async () => {
       const provider = new MockProvider({

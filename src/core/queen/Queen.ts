@@ -13,6 +13,8 @@ import { shouldSynthesizeWithLLM } from './AggregationHeuristic.js';
 import { ToolEffectivenessTracker } from './ToolEffectivenessTracker.js';
 import { StrategyStore } from './StrategyStore.js';
 import { DiscoveryCoordinator } from './DiscoveryCoordinator.js';
+import { DelegateTasksHandler } from './DelegateTasksHandler.js';
+import type { DelegateTasksInput } from './DelegateTasksHandler.js';
 import type { MemoryStore } from '../memory/MemoryStore.js';
 import type { LLMProvider, ChatOptions, ToolDefinition, ToolCall, TrackedChatOptions, StreamChunk } from '../../providers/index.js';
 import { TrackedProvider, isTrackedProvider, wrapWithTracking } from '../../providers/index.js';
@@ -90,6 +92,7 @@ export class Queen {
   private strategyStore?: StrategyStore;
   private memoryStore?: MemoryStore;
   private discoveryCoordinator?: DiscoveryCoordinator;
+  private delegateHandler!: DelegateTasksHandler;
 
   constructor(options: QueenOptions) {
     this.provider = options.provider;
@@ -133,6 +136,13 @@ export class Queen {
         config: discoveryConfig,
       });
     }
+
+    // Create delegate_tasks handler
+    this.delegateHandler = new DelegateTasksHandler({
+      workerPool: this.workerPool,
+      discoveryCoordinator: this.discoveryCoordinator,
+      eventHandler: (event: AgentEvent) => this.emitEvent(event),
+    });
 
     // Set system prompt with skill awareness
     const baseSystemPrompt = options.systemPrompt || 
@@ -587,12 +597,36 @@ export class Queen {
    * Execute tool calls via MCP server (parallel)
    */
   private async executeToolCalls(toolCalls: ToolCall[]): Promise<Array<{ toolCallId: string; name: string; result: string }>> {
-    if (!this.mcpServer) return [];
+    if (!this.mcpServer && !toolCalls.some(tc => tc.name === 'delegate_tasks')) return [];
 
     const mcpServer = this.mcpServer;
     const settled = await Promise.allSettled(
       toolCalls.map(async (toolCall) => {
         try {
+          // Intercept delegate_tasks — Queen-internal tool
+          if (toolCall.name === 'delegate_tasks') {
+            const input = toolCall.arguments as unknown as DelegateTasksInput;
+            const result = await this.delegateHandler.execute(input, {
+              skillContext: this.currentSkillContext ? {
+                name: this.currentSkillContext.name,
+                instructions: this.currentSkillContext.instructions,
+                resources: this.currentSkillContext.resources,
+              } : undefined,
+              toolEffectivenessHints: (desc: string) => {
+                const pattern = this.toolTracker.classifyTaskPattern(desc);
+                return this.toolTracker.getHints(pattern) ?? undefined;
+              },
+              strategyHints: this.strategyStore ? (desc: string) => {
+                const pattern = this.toolTracker.classifyTaskPattern(desc);
+                return this.strategyStore!.buildStrategyHints(pattern) ?? undefined;
+              } : undefined,
+            });
+            return { toolCallId: toolCall.id, name: toolCall.name, result };
+          }
+
+          if (!mcpServer) {
+            return { toolCallId: toolCall.id, name: toolCall.name, result: 'Error: No MCP server available' };
+          }
           const result = await mcpServer.executeToolCall(toolCall);
           const resultStr = result.success
             ? truncateToolResult(JSON.stringify(result.data, null, 2))
