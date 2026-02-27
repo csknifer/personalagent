@@ -40,7 +40,7 @@ export const WorkerConfigSchema = z.object({
   provider: z.string().nullable().optional(),
   model: z.string().nullable().optional(),
   maxConcurrent: z.number().int().positive().default(4),
-  timeout: z.number().positive().default(300000),
+  timeout: z.number().positive().default(120000),
 });
 
 export const DimensionalConfigSchema = z.object({
@@ -61,9 +61,9 @@ export const AdaptiveTimeoutTierSchema = z.object({
 
 export const AdaptiveTimeoutConfigSchema = z.object({
   enabled: z.boolean().default(true),
-  low: AdaptiveTimeoutTierSchema.default({ maxIterations: 2, timeout: 60000 }),
-  medium: AdaptiveTimeoutTierSchema.default({ maxIterations: 5, timeout: 180000 }),
-  high: AdaptiveTimeoutTierSchema.default({ maxIterations: 8, timeout: 300000 }),
+  low: AdaptiveTimeoutTierSchema.default({ maxIterations: 2, timeout: 45000 }),
+  medium: AdaptiveTimeoutTierSchema.default({ maxIterations: 4, timeout: 120000 }),
+  high: AdaptiveTimeoutTierSchema.default({ maxIterations: 6, timeout: 180000 }),
 });
 
 export const UnifiedVerificationConfigSchema = z.object({

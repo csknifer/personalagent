@@ -965,7 +965,7 @@ export function createRalphLoopRunner(
 ) {
   const defaultOptions: RalphLoopOptions = {
     maxIterations: options.maxIterations ?? 5,
-    timeout: options.timeout ?? 300000, // 5 minutes
+    timeout: options.timeout ?? 120000, // 2 minutes
     verifier: options.verifier,
     mcpServer: options.mcpServer,
     onProgress: options.onProgress,

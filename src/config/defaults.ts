@@ -51,7 +51,7 @@ export const defaultConfig: Config = {
       provider: 'gemini',
       model: 'gemini-3-flash-preview',
       maxConcurrent: 4,
-      timeout: 300000,
+      timeout: 120000,
     },
     ralphLoop: {
       maxIterations: 5,

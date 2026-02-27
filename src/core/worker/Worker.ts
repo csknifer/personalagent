@@ -40,7 +40,7 @@ export class Worker {
     this.provider = options.provider;
     this.mcpServer = options.mcpServer;
     this.maxIterations = options.maxIterations ?? 5;
-    this.timeout = options.timeout ?? 300000;
+    this.timeout = options.timeout ?? 120000;
     this.verifier = options.verifier;
     this.stateHandler = options.onStateChange;
     this.eventHandler = options.onEvent;
