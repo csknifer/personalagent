@@ -73,6 +73,13 @@ export function useQueenSocket(url?: string): UseQueenSocketReturn {
   const reconnectAttemptRef = useRef(0);
   const streamAccumulatorRef = useRef('');
   const activeMessageIdRef = useRef<string | null>(null);
+  const isProcessingRef = useRef(false);
+  const intentionalCloseRef = useRef(false);
+
+  // Keep ref in sync with state so callbacks with [] deps can read current value
+  useEffect(() => {
+    isProcessingRef.current = isProcessing;
+  }, [isProcessing]);
 
   const wsUrl = url ?? `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`;
 
@@ -114,9 +121,12 @@ export function useQueenSocket(url?: string): UseQueenSocketReturn {
         handleAgentEvent(msg.event);
         break;
 
-      case 'error':
-        if (msg.messageId && activeMessageIdRef.current === msg.messageId) {
-          // Error during message processing
+      case 'error': {
+        const isActiveMessage = msg.messageId && activeMessageIdRef.current === msg.messageId;
+        const isOrphanedError = !msg.messageId && isProcessingRef.current;
+
+        if (isActiveMessage || isOrphanedError) {
+          // Error during message processing (matched or unmatched)
           setMessages(prev => [
             ...prev,
             {
@@ -132,6 +142,7 @@ export function useQueenSocket(url?: string): UseQueenSocketReturn {
           setIsProcessing(false);
         }
         break;
+      }
 
       case 'pong':
         break;
@@ -220,7 +231,9 @@ export function useQueenSocket(url?: string): UseQueenSocketReturn {
   // ─── Connection Management ────────────────────────────────────────
 
   const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) return;
+    // Fix #3: Also guard against CONNECTING state to prevent duplicate sockets
+    if (wsRef.current?.readyState === WebSocket.OPEN ||
+        wsRef.current?.readyState === WebSocket.CONNECTING) return;
 
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
@@ -242,7 +255,20 @@ export function useQueenSocket(url?: string): UseQueenSocketReturn {
     ws.onclose = () => {
       setConnected(false);
       wsRef.current = null;
-      scheduleReconnect();
+
+      // Fix #2: Reset streaming state on mid-stream disconnect
+      if (activeMessageIdRef.current) {
+        setStreamingContent('');
+        setStreamingToolCalls([]);
+        streamAccumulatorRef.current = '';
+        activeMessageIdRef.current = null;
+        setIsProcessing(false);
+      }
+
+      // Fix #4: Don't reconnect if close was intentional (cleanup/unmount)
+      if (!intentionalCloseRef.current) {
+        scheduleReconnect();
+      }
     };
 
     ws.onerror = () => {
@@ -261,8 +287,11 @@ export function useQueenSocket(url?: string): UseQueenSocketReturn {
   }, [connect]);
 
   useEffect(() => {
+    intentionalCloseRef.current = false;
     connect();
     return () => {
+      // Fix #4: Mark close as intentional so onclose won't schedule reconnect
+      intentionalCloseRef.current = true;
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
       }
@@ -313,6 +342,8 @@ export function useQueenSocket(url?: string): UseQueenSocketReturn {
     setStreamingToolCalls([]);
     setDiscoveryState(null);
     streamAccumulatorRef.current = '';
+    // Fix #5: Reset active message ID to prevent ghost messages
+    activeMessageIdRef.current = null;
   }, [send]);
 
   return {
