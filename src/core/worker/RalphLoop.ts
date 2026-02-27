@@ -24,7 +24,7 @@ import type { CostRegistry } from '../cost/CostRegistry.js';
 // Internal imports from split modules
 import { DEFAULT_CALL_TIMEOUT, DEFAULT_TOOL_TIMEOUT, truncateToolResult, yieldToEventLoop, callWithTimeout, computeStringSimilarity, classifyToolError, extractFindings, extractScratchpad, extractRetentionMarkers, extractSignals } from './ralphUtils.js';
 import type { RalphLoopOptions, RalphLoopContext } from './verifiers.js';
-import { LLMVerifier, UnifiedVerifier } from './verifiers.js';
+import { UnifiedVerifier } from './verifiers.js';
 import type { UnifiedVerificationResult } from './verifiers.js';
 import { parseSuccessCriteria, maskObservations, ConvergenceTracker, DimensionalVerifier, generateReflexion, generateDimensionalReflexion } from './dimensional.js';
 import { buildIterationPrompt, buildToolSystemPrompt } from './iterationPrompt.js';
@@ -33,7 +33,7 @@ import { buildIterationPrompt, buildToolSystemPrompt } from './iterationPrompt.j
 // Barrel re-exports — preserves the public API for all importers
 // ============================================================
 export { truncateToolResult, computeStringSimilarity, callWithTimeout, classifyToolError, extractFindings } from './ralphUtils.js';
-export { LLMVerifier, UnifiedVerifier, TestBasedVerifier } from './verifiers.js';
+export { UnifiedVerifier, TestBasedVerifier } from './verifiers.js';
 export type { UnifiedVerificationResult } from './verifiers.js';
 export type { RalphLoopOptions, RalphLoopContext } from './verifiers.js';
 export { parseSuccessCriteria, maskObservations, ConvergenceTracker, DimensionalVerifier, generateReflexion, generateDimensionalReflexion } from './dimensional.js';
@@ -402,8 +402,6 @@ export async function ralphLoop(
     const verificationProvider = trackedProvider.withPurpose('verification');
 
     // Choose verifier: DCL dimensional > custom > default UnifiedVerifier
-    // UnifiedVerifier replaces LLMVerifier as default — it merges verification + reflexion
-    // into a single LLM call, saving a round-trip per failed iteration.
     let activeVerifier: Verifier;
     let useUnifiedVerifier = false;
     if (useDCL) {
@@ -412,7 +410,7 @@ export async function ralphLoop(
         criteria,
         dclConfig?.passingScore,
       );
-    } else if (!verifier || verifier instanceof LLMVerifier) {
+    } else if (!verifier) {
       activeVerifier = new UnifiedVerifier(verificationProvider, task.description, task.successCriteria);
       useUnifiedVerifier = true;
     } else {
@@ -514,7 +512,6 @@ export async function ralphLoop(
     // --- Reflexion: generate strategic guidance after failed verification ---
     // UnifiedVerifier provides nextAction inline (no extra LLM call needed).
     // DCL keeps separate dimensional reflexion (per-criterion guidance is more valuable).
-    // Legacy LLMVerifier falls through to separate generateReflexion() call.
     if (!verification.complete) {
       if (useUnifiedVerifier) {
         // UnifiedVerifier already included nextAction — use it directly

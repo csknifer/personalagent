@@ -2,7 +2,7 @@
  * Worker Agent - Stateless task executor using Ralph Loop
  */
 
-import { ralphLoop, LLMVerifier, type TestBasedVerifier } from './RalphLoop.js';
+import { ralphLoop, UnifiedVerifier, type TestBasedVerifier } from './RalphLoop.js';
 import type { Task, TaskResult, Verifier, WorkerState, AgentEventHandler } from '../types.js';
 import type { LLMProvider } from '../../providers/index.js';
 import type { MCPServer } from '../../mcp/MCPServer.js';
@@ -75,7 +75,7 @@ export class Worker {
       const result = await ralphLoop(this.provider, task, {
         maxIterations: this.maxIterations,
         timeout: this.timeout,
-        verifier: this.verifier || new LLMVerifier(this.provider, task.description, task.successCriteria),
+        verifier: this.verifier || new UnifiedVerifier(this.provider, task.description, task.successCriteria),
         mcpServer: this.mcpServer,
         dimensionalConfig: this.dimensionalConfig,
         signal: this.signal,

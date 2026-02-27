@@ -7,6 +7,6 @@ export { WorkerPool, createWorkerPool } from './WorkerPool.js';
 export { 
   ralphLoop, 
   createRalphLoopRunner,
-  LLMVerifier,
+  UnifiedVerifier,
   TestBasedVerifier,
 } from './RalphLoop.js';

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
-  LLMVerifier, TestBasedVerifier, ralphLoop,
+  UnifiedVerifier, TestBasedVerifier, ralphLoop,
   parseSuccessCriteria, maskObservations,
   ConvergenceTracker, DimensionalVerifier,
   generateReflexion, generateDimensionalReflexion,
@@ -25,13 +25,13 @@ function createTask(overrides: Partial<Task> = {}): Task {
   };
 }
 
-describe('LLMVerifier', () => {
+describe('UnifiedVerifier', () => {
   let provider: MockProvider;
-  let verifier: LLMVerifier;
+  let verifier: UnifiedVerifier;
 
   beforeEach(() => {
     provider = new MockProvider();
-    verifier = new LLMVerifier(provider);
+    verifier = new UnifiedVerifier(provider, 'Test task', 'Task is complete');
   });
 
   it('parses complete verification response', async () => {
@@ -50,11 +50,12 @@ describe('LLMVerifier', () => {
     expect(result.confidence).toBe(0.95);
   });
 
-  it('parses incomplete verification response', async () => {
+  it('parses incomplete verification response with nextAction', async () => {
     provider.defaultResponse = JSON.stringify({
       complete: false,
       confidence: 0.3,
       feedback: 'Missing details',
+      nextAction: 'Search for more data',
     });
 
     const result = await verifier.check({
@@ -64,6 +65,7 @@ describe('LLMVerifier', () => {
 
     expect(result.complete).toBe(false);
     expect(result.feedback).toBe('Missing details');
+    expect(result.nextAction).toBe('Search for more data');
   });
 
   it('returns incomplete on parse error', async () => {
@@ -89,6 +91,7 @@ describe('LLMVerifier', () => {
     expect(result.complete).toBe(false);
     expect(result.feedback).toContain('retry');
   });
+
   it('includes tool failure hard facts in verification prompt', async () => {
     provider.defaultResponse = JSON.stringify({
       complete: false,
@@ -106,8 +109,6 @@ describe('LLMVerifier', () => {
     });
 
     expect(result.complete).toBe(false);
-    // The verifier should have received the tool failures in its prompt
-    // We verify indirectly through the provider's complete calls
     expect(result.confidence).toBeLessThanOrEqual(0.2);
   });
 });

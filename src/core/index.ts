@@ -13,7 +13,7 @@ export {
   createWorkerPool,
   ralphLoop,
   createRalphLoopRunner,
-  LLMVerifier,
+  UnifiedVerifier,
   TestBasedVerifier,
 } from './worker/index.js';
 
