@@ -1597,3 +1597,40 @@ describe('buildIterationPrompt time budget', () => {
     expect(prompt).not.toContain('Time Status');
   });
 });
+
+// =============================================================================
+// Synthesis Forcing Tests (iterationPrompt)
+// =============================================================================
+
+describe('buildIterationPrompt synthesis forcing', () => {
+  const createCtx = (overrides: Record<string, unknown> = {}) => ({
+    task: { description: 'test', successCriteria: 'done', dependencies: [], priority: 1, status: 'pending' as const, id: 't1', createdAt: new Date() },
+    iteration: 1,
+    previousAttempts: [] as string[],
+    feedback: [] as string[],
+    findings: [] as string[],
+    toolCalls: 0,
+    llmCalls: 0,
+    consecutiveAllToolFailures: 0,
+    scratchpad: [] as string[],
+    retainedToolResults: new Map<string, string>(),
+    maxRetainedTokens: 5000,
+    ...overrides,
+  });
+
+  it('does NOT include synthesis directive on iteration 1', () => {
+    const prompt = buildIterationPrompt(createCtx({ iteration: 1 }));
+    expect(prompt).not.toContain('SYNTHESIS REQUIRED');
+  });
+
+  it('includes synthesis directive on iteration 2', () => {
+    const prompt = buildIterationPrompt(createCtx({ iteration: 2, previousAttempts: ['prev attempt'] }));
+    expect(prompt).toContain('SYNTHESIS REQUIRED');
+    expect(prompt).toContain('Do NOT perform additional web searches');
+  });
+
+  it('includes synthesis directive on iteration 3+', () => {
+    const prompt = buildIterationPrompt(createCtx({ iteration: 3, previousAttempts: ['prev1', 'prev2'] }));
+    expect(prompt).toContain('SYNTHESIS REQUIRED');
+  });
+});

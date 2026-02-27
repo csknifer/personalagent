@@ -265,6 +265,21 @@ Your previous response contained data that does NOT match your actual tool outpu
     prompt += '\n\n';
   }
 
+  // Synthesis forcing: after the first iteration, prioritize synthesis over new research
+  if (context.iteration >= 2) {
+    prompt += `## SYNTHESIS REQUIRED
+You have already gathered data in previous iterations. Your PRIMARY goal now is to SYNTHESIZE your existing findings into a complete, well-structured response.
+
+**Rules for this iteration:**
+- Do NOT perform additional web searches or URL fetches unless you have a specific, critical gap
+- Use the data from your previous attempts, Established Findings, and Retained Tool Results above
+- Structure your response with clear headings, specific data points, and source citations
+- If some data could not be retrieved, explicitly state that rather than searching again
+- A well-organized synthesis of existing data is ALWAYS better than another search cycle
+
+`;
+  }
+
   // Time budget awareness: warn workers when time is running out
   if (context.timeBudget && context.timeBudget.percentElapsed >= 70) {
     prompt += `## TIME WARNING
