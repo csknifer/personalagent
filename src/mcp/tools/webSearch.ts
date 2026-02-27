@@ -104,6 +104,42 @@ export async function webSearchTool(
 }
 
 /**
+ * Check whether a hostname resolves to a private/internal network address.
+ * Used to prevent SSRF attacks by blocking requests to internal services.
+ */
+export function isPrivateHost(hostname: string): boolean {
+  const lower = hostname.toLowerCase();
+
+  // Well-known private hostnames
+  if (lower === 'localhost') return true;
+
+  // IPv6 loopback
+  if (lower === '::1' || lower === '0:0:0:0:0:0:0:1') return true;
+
+  // Parse IPv4
+  const ipv4Match = lower.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (ipv4Match) {
+    const [, a, b] = ipv4Match.map(Number);
+    // 127.0.0.0/8 — loopback
+    if (a === 127) return true;
+    // 10.0.0.0/8 — private
+    if (a === 10) return true;
+    // 172.16.0.0/12 — private
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    // 192.168.0.0/16 — private
+    if (a === 192 && b === 168) return true;
+    // 169.254.0.0/16 — link-local / cloud metadata
+    if (a === 169 && b === 254) return true;
+    // 0.0.0.0/8
+    if (a === 0) return true;
+  }
+
+  return false;
+}
+
+const MAX_REDIRECTS = 5;
+
+/**
  * Fetch content from a URL
  */
 export async function fetchUrlTool(url: string): Promise<FetchResult> {
@@ -122,16 +158,69 @@ export async function fetchUrlTool(url: string): Promise<FetchResult> {
       };
     }
 
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-      },
-    });
+    // SSRF protection: block requests to private/internal network addresses
+    const hostname = parsedUrl.hostname.replace(/^\[|\]$/g, '');
+    if (isPrivateHost(hostname)) {
+      return { success: false, error: `Fetching internal/private network addresses is not allowed: "${hostname}"` };
+    }
 
-    if (!response.ok) {
-      throw new Error(`HTTP error: ${response.status} ${response.statusText}`);
+    const fetchHeaders = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.9',
+    };
+
+    // Follow redirects manually to validate each target against SSRF rules
+    let currentUrl = url;
+    let response: Response | undefined;
+    for (let i = 0; i <= MAX_REDIRECTS; i++) {
+      response = await fetch(currentUrl, {
+        headers: fetchHeaders,
+        redirect: 'manual',
+      });
+
+      // Handle redirects (3xx with Location header)
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get('location');
+        if (!location) {
+          throw new Error(`Redirect (${response.status}) without Location header`);
+        }
+
+        // Resolve relative redirect URLs
+        let redirectUrl: URL;
+        try {
+          redirectUrl = new URL(location, currentUrl);
+        } catch {
+          throw new Error(`Invalid redirect URL: "${location}"`);
+        }
+
+        // Validate redirect target scheme
+        if (redirectUrl.protocol !== 'http:' && redirectUrl.protocol !== 'https:') {
+          return {
+            success: false,
+            error: `Redirect to "${redirectUrl.protocol}" scheme is not allowed. Only http and https are permitted.`,
+          };
+        }
+
+        // Validate redirect target hostname against SSRF
+        const redirectHostname = redirectUrl.hostname.replace(/^\[|\]$/g, '');
+        if (isPrivateHost(redirectHostname)) {
+          return { success: false, error: `Fetching internal/private network addresses is not allowed: "${redirectHostname}"` };
+        }
+
+        currentUrl = redirectUrl.href;
+        if (i === MAX_REDIRECTS) {
+          throw new Error(`Too many redirects (max ${MAX_REDIRECTS})`);
+        }
+        continue;
+      }
+
+      break;
+    }
+
+    if (!response || !response.ok) {
+      const status = response ? `${response.status} ${response.statusText}` : 'no response';
+      throw new Error(`HTTP error: ${status}`);
     }
 
     const contentType = response.headers.get('content-type') || 'text/plain';

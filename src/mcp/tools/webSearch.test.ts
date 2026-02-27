@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { htmlToText } from './webSearch.js';
+import { htmlToText, fetchUrlTool, isPrivateHost } from './webSearch.js';
 
 describe('htmlToText', () => {
   it('extracts text from a simple HTML page', () => {
@@ -105,5 +105,91 @@ describe('htmlToText', () => {
     const text = htmlToText(html);
     expect(text).toContain('Unclosed paragraph');
     expect(text).toContain('Another div');
+  });
+});
+
+describe('isPrivateHost', () => {
+  it('detects localhost', () => {
+    expect(isPrivateHost('localhost')).toBe(true);
+  });
+
+  it('detects 127.0.0.1', () => {
+    expect(isPrivateHost('127.0.0.1')).toBe(true);
+  });
+
+  it('detects 127.x.x.x range', () => {
+    expect(isPrivateHost('127.0.0.2')).toBe(true);
+    expect(isPrivateHost('127.255.255.255')).toBe(true);
+  });
+
+  it('detects IPv6 loopback', () => {
+    expect(isPrivateHost('::1')).toBe(true);
+  });
+
+  it('detects 10.x.x.x private range', () => {
+    expect(isPrivateHost('10.0.0.1')).toBe(true);
+    expect(isPrivateHost('10.255.255.255')).toBe(true);
+  });
+
+  it('detects 172.16-31.x.x private range', () => {
+    expect(isPrivateHost('172.16.0.1')).toBe(true);
+    expect(isPrivateHost('172.31.255.255')).toBe(true);
+    expect(isPrivateHost('172.15.0.1')).toBe(false);
+    expect(isPrivateHost('172.32.0.1')).toBe(false);
+  });
+
+  it('detects 192.168.x.x private range', () => {
+    expect(isPrivateHost('192.168.0.1')).toBe(true);
+    expect(isPrivateHost('192.168.255.255')).toBe(true);
+  });
+
+  it('detects 169.254.x.x link-local / cloud metadata', () => {
+    expect(isPrivateHost('169.254.169.254')).toBe(true);
+    expect(isPrivateHost('169.254.0.1')).toBe(true);
+  });
+
+  it('detects 0.0.0.0/8', () => {
+    expect(isPrivateHost('0.0.0.0')).toBe(true);
+    expect(isPrivateHost('0.255.255.255')).toBe(true);
+  });
+
+  it('allows public IPs', () => {
+    expect(isPrivateHost('8.8.8.8')).toBe(false);
+    expect(isPrivateHost('example.com')).toBe(false);
+    expect(isPrivateHost('1.2.3.4')).toBe(false);
+  });
+});
+
+describe('fetchUrlTool SSRF protection', () => {
+  it('blocks localhost URLs (127.0.0.1)', async () => {
+    const result = await fetchUrlTool('http://127.0.0.1/secret');
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('internal/private network');
+  });
+
+  it('blocks private IPs (10.0.0.1)', async () => {
+    const result = await fetchUrlTool('http://10.0.0.1/admin');
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('internal/private network');
+  });
+
+  it('blocks IPv6 loopback (::1)', async () => {
+    const result = await fetchUrlTool('http://[::1]/secret');
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('internal/private network');
+  });
+
+  it('blocks cloud metadata (169.254.169.254)', async () => {
+    const result = await fetchUrlTool('http://169.254.169.254/latest/meta-data/');
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('internal/private network');
+  });
+
+  it('allows normal public URLs (may fail with network error, but not SSRF block)', async () => {
+    const result = await fetchUrlTool('https://example.com');
+    // Should NOT be blocked by SSRF check — it may fail for network reasons but error won't mention private network
+    if (!result.success) {
+      expect(result.error).not.toContain('internal/private network');
+    }
   });
 });
