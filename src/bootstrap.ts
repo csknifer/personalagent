@@ -160,10 +160,6 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Bootstr
   shutdownManager.register('mcpServer', () => mcpServer.close(), 0);
   shutdownManager.attachSignalHandlers();
 
-  // Tavily web_search is opt-in via TAVILY_API_KEY.
-  // When absent, web_search is silently skipped — fetch_url and the Google Search
-  // MCP server (g-search-mcp) remain available as the primary search capability.
-
   return {
     config,
     queenProvider,

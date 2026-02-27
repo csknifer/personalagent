@@ -158,10 +158,6 @@ export class ConfigLoader {
     if (process.env.ANTHROPIC_API_KEY) {
       result.apiKeys.anthropic = process.env.ANTHROPIC_API_KEY;
     }
-    if (process.env.TAVILY_API_KEY) {
-      result.apiKeys.tavily = process.env.TAVILY_API_KEY;
-    }
-
     // Provider override
     if (process.env.PA_PROVIDER) {
       result.providers.default = process.env.PA_PROVIDER;

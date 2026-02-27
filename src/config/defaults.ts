@@ -84,7 +84,7 @@ export const defaultConfig: Config = {
     enabled: true,
     tools: {
       fileSystem: true,
-      webSearch: false,
+      webSearch: true,
       codeExecution: true,
       shellExecution: {
         enabled: true,

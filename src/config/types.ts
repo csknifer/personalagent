@@ -14,7 +14,6 @@ export interface ApiKeys {
   gemini?: string;
   openai?: string;
   anthropic?: string;
-  tavily?: string;
   [key: string]: string | undefined;
 }
 

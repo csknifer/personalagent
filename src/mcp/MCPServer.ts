@@ -11,9 +11,7 @@ import {
   deleteFileTool,
   createDirectoryTool,
   getFileSystemToolDefinitions,
-  webSearchTool,
   fetchUrlTool,
-  getTavilyToolDefinition,
   getFetchUrlToolDefinition,
   executeCommandTool,
   getShellExecutionToolDefinitions,
@@ -89,25 +87,8 @@ export class MCPServer {
       });
     }
 
-    // Web search tools
+    // URL fetching tool (no API key required)
     if (toolsConfig.webSearch) {
-      // web_search (Tavily) only registers when the API key is present
-      if (this.config.apiKeys.tavily) {
-        this.registerTool('web_search', async (args) => {
-          const result = await webSearchTool(
-            args.query as string,
-            this.config.apiKeys.tavily!,
-            (args.maxResults as number) || 5,
-          );
-          // Auto-disable on quota exhaustion so workers don't waste calls
-          if (!result.success && result.error?.includes('plan limit exceeded')) {
-            this.unregisterTool('web_search');
-          }
-          return result;
-        });
-      }
-
-      // fetch_url is always available (no API key required)
       this.registerTool('fetch_url', async (args) => {
         return fetchUrlTool(args.url as string);
       });
@@ -231,10 +212,6 @@ export class MCPServer {
     }
 
     if (toolsConfig.webSearch) {
-      // Only advertise web_search when Tavily key is actually configured
-      if (this.config.apiKeys.tavily) {
-        definitions.push(getTavilyToolDefinition());
-      }
       definitions.push(getFetchUrlToolDefinition());
     }
 

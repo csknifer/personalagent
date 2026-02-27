@@ -8,7 +8,6 @@ export const ApiKeysSchema = z.object({
   gemini: z.string().optional(),
   openai: z.string().optional(),
   anthropic: z.string().optional(),
-  tavily: z.string().optional(),
 }).passthrough().default({});
 
 export const ProviderConfigSchema = z.object({

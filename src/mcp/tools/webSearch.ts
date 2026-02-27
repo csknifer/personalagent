@@ -1,24 +1,9 @@
 /**
- * Web search tools for MCP
+ * URL fetching and SSRF protection tools for MCP
  */
 
 import { lookup } from 'dns/promises';
 import { parseHTML } from 'linkedom';
-
-export interface WebSearchResult {
-  title: string;
-  url: string;
-  snippet: string;
-}
-
-export interface WebSearchToolResult {
-  success: boolean;
-  data?: {
-    query: string;
-    results: WebSearchResult[];
-  };
-  error?: string;
-}
 
 export interface FetchResult {
   success: boolean;
@@ -30,84 +15,6 @@ export interface FetchResult {
   error?: string;
 }
 
-/**
- * Search the web using Tavily API
- */
-export async function webSearchTool(
-  query: string,
-  apiKey: string,
-  maxResults: number = 5
-): Promise<WebSearchToolResult> {
-  if (!apiKey) {
-    return {
-      success: false,
-      error: 'Tavily API key not configured. Set TAVILY_API_KEY environment variable.',
-    };
-  }
-
-  try {
-    const response = await fetch('https://api.tavily.com/search', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        api_key: apiKey,
-        query,
-        search_depth: 'basic',
-        max_results: maxResults,
-        include_answer: false,
-      }),
-    });
-
-    if (!response.ok) {
-      // Tavily-specific error codes with actionable messages
-      if (response.status === 432) {
-        throw new Error('Tavily plan limit exceeded — monthly search quota used up. Upgrade your Tavily plan or wait for the next billing cycle. web_search will not work until this is resolved.');
-      }
-      if (response.status === 429) {
-        throw new Error('Tavily rate limit exceeded — too many requests per minute. Wait briefly before retrying.');
-      }
-      if (response.status === 401) {
-        throw new Error('Tavily API key is invalid or missing. Check your TAVILY_API_KEY environment variable.');
-      }
-      throw new Error(`Tavily API error: ${response.status} ${response.statusText}`);
-    }
-
-    const data = await response.json() as {
-      results: Array<{
-        title: string;
-        url: string;
-        content: string;
-      }>;
-    };
-
-    const results: WebSearchResult[] = data.results.map(r => ({
-      title: r.title,
-      url: r.url,
-      snippet: r.content,
-    }));
-
-    return {
-      success: true,
-      data: {
-        query,
-        results,
-      },
-    };
-  } catch (error) {
-    const err = error instanceof Error ? error : new Error(String(error));
-    return {
-      success: false,
-      error: `Web search failed: ${err.message}`,
-    };
-  }
-}
-
-/**
- * Check whether a hostname resolves to a private/internal network address.
- * Used to prevent SSRF attacks by blocking requests to internal services.
- */
 /**
  * Check whether an IP address string is in a private/reserved range.
  */
@@ -334,30 +241,6 @@ export function htmlToText(html: string): string {
 }
 
 /**
- * Tool definition for the Tavily web_search tool (only register when API key present).
- */
-export function getTavilyToolDefinition() {
-  return {
-    name: 'web_search',
-    description: 'Search the web for information using Tavily',
-    parameters: {
-      type: 'object',
-      properties: {
-        query: {
-          type: 'string',
-          description: 'The search query',
-        },
-        maxResults: {
-          type: 'number',
-          description: 'Maximum number of results to return (default: 5)',
-        },
-      },
-      required: ['query'],
-    },
-  };
-}
-
-/**
  * Tool definition for fetch_url (always available, no API key required).
  */
 export function getFetchUrlToolDefinition() {
@@ -375,12 +258,4 @@ export function getFetchUrlToolDefinition() {
       required: ['url'],
     },
   };
-}
-
-/**
- * Get web search tool definitions for MCP.
- * @deprecated Use getTavilyToolDefinition() and getFetchUrlToolDefinition() directly.
- */
-export function getWebSearchToolDefinitions() {
-  return [getTavilyToolDefinition(), getFetchUrlToolDefinition()];
 }

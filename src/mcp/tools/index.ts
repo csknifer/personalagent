@@ -15,11 +15,8 @@ export {
 export type { SandboxConfig } from './fileSystem.js';
 
 export {
-  webSearchTool,
   fetchUrlTool,
   htmlToText,
-  getWebSearchToolDefinitions,
-  getTavilyToolDefinition,
   getFetchUrlToolDefinition,
 } from './webSearch.js';
 
