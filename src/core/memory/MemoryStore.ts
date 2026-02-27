@@ -145,7 +145,12 @@ export class MemoryStore {
   }
 
   async applyDecay(factor: number): Promise<void> {
-    const files = await readdir(this.dir);
+    let files: string[];
+    try {
+      files = await readdir(this.dir);
+    } catch {
+      return; // directory doesn't exist yet — nothing to decay
+    }
     for (const file of files) {
       if (!file.endsWith('.md')) continue;
       const path = join(this.dir, file);
@@ -161,7 +166,12 @@ export class MemoryStore {
   }
 
   async prune(threshold: number): Promise<number> {
-    const files = await readdir(this.dir);
+    let files: string[];
+    try {
+      files = await readdir(this.dir);
+    } catch {
+      return 0; // directory doesn't exist yet — nothing to prune
+    }
     let pruned = 0;
     for (const file of files) {
       if (!file.endsWith('.md')) continue;
