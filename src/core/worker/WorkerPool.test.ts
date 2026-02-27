@@ -119,11 +119,15 @@ describe('WorkerPool', () => {
       await pool.submitTask(createTask({ id: 't1' }));
       const statsAfterFirst = pool.getStats();
 
+      // Workers are cleaned up after completion, so totalWorkers should be 0
+      expect(statsAfterFirst.totalWorkers).toBe(0);
+
       // Execute second task — creates a new worker with fresh composed signal
       await pool.submitTask(createTask({ id: 't2' }));
       const statsAfterSecond = pool.getStats();
 
-      expect(statsAfterSecond.totalWorkers).toBe(statsAfterFirst.totalWorkers + 1);
+      // Both tasks completed and workers were cleaned up
+      expect(statsAfterSecond.totalWorkers).toBe(0);
     });
   });
 

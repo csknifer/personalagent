@@ -150,11 +150,21 @@ export class WorkerPool {
         })
       );
 
-      // Record results — both fulfilled and caught-as-failed
-      for (const settled of batchSettled) {
+      // Record results — both fulfilled and rejected
+      for (let i = 0; i < batchSettled.length; i++) {
+        const settled = batchSettled[i];
         if (settled.status === 'fulfilled') {
           const { taskId, result } = settled.value;
           results.set(taskId, result);
+          completed.add(taskId);
+        } else {
+          const taskId = ready[i].id;
+          results.set(taskId, {
+            success: false,
+            output: '',
+            error: settled.reason?.message || 'Unknown execution error',
+            iterations: 0,
+          });
           completed.add(taskId);
         }
       }
@@ -210,6 +220,7 @@ export class WorkerPool {
       this.taskAbortControllers.delete(queued.task.id);
       this.workerTaskMap.delete(worker.id);
       this.activeWorkers.delete(worker.id);
+      this.workers.delete(worker.id);
       worker.reset();
       this.processQueue();
     }
