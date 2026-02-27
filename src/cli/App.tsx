@@ -137,7 +137,7 @@ Worker Pool Status:
             const action = worker.currentAction ? ` - ${worker.currentAction}` : '';
             const llmInfo = worker.llmCalls ? ` | LLM: ${worker.llmCalls}` : '';
             const toolInfo = worker.toolCalls ? ` | Tools: ${worker.toolCalls}` : '';
-            console.log(`  - ${worker.id}: ${worker.status} (iter ${worker.iteration}/${worker.maxIterations || 10})${llmInfo}${toolInfo}${action}`);
+            console.log(`  - ${worker.id}: ${worker.status} (iter ${worker.iteration}/${worker.maxIterations || 5})${llmInfo}${toolInfo}${action}`);
           }
         }
         break;

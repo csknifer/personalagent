@@ -99,7 +99,7 @@ const WorkerItem: React.FC<WorkerItemProps> = ({ worker, verbose = false }) => {
     : taskDescription;
 
   // Create progress indicator
-  const maxIterations = worker.maxIterations || 10;
+  const maxIterations = worker.maxIterations || 5;
   const progressPercent = Math.round((worker.iteration / maxIterations) * 100);
 
   return (

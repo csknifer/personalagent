@@ -624,7 +624,7 @@ async function executeIterationWithTools(
   mcpServer: MCPServer | undefined,
   onProgress?: (iteration: number, status: string) => void,
   onEvent?: AgentEventHandler,
-  maxIterations: number = 10,
+  maxIterations: number = 5,
   callTimeout: number = DEFAULT_CALL_TIMEOUT,
   toolTimeout: number = DEFAULT_TOOL_TIMEOUT,
   signal?: AbortSignal
@@ -688,7 +688,7 @@ async function executeIterationWithTools(
     // Handle tool calls with multi-round support (max 5 tool rounds per iteration)
     let currentResponse = response;
     let toolRound = 0;
-    const maxToolRounds = 5;
+    const maxToolRounds = 3;
 
     while (currentResponse.toolCalls && currentResponse.toolCalls.length > 0 && mcpServer && toolRound < maxToolRounds) {
       toolRound++;
@@ -964,7 +964,7 @@ export function createRalphLoopRunner(
   options: Partial<RalphLoopOptions> = {}
 ) {
   const defaultOptions: RalphLoopOptions = {
-    maxIterations: options.maxIterations ?? 10,
+    maxIterations: options.maxIterations ?? 5,
     timeout: options.timeout ?? 300000, // 5 minutes
     verifier: options.verifier,
     mcpServer: options.mcpServer,

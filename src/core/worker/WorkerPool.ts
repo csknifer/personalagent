@@ -53,7 +53,7 @@ export class WorkerPool {
   constructor(options: WorkerPoolOptions) {
     this.provider = options.provider;
     this.maxWorkers = options.maxWorkers;
-    this.maxIterations = options.maxIterations ?? 10;
+    this.maxIterations = options.maxIterations ?? 5;
     this.timeout = options.timeout ?? 300000;
     this.verifier = options.verifier;
     this.mcpServer = options.mcpServer;

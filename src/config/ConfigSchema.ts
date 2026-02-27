@@ -63,7 +63,7 @@ export const AdaptiveTimeoutConfigSchema = z.object({
   enabled: z.boolean().default(true),
   low: AdaptiveTimeoutTierSchema.default({ maxIterations: 2, timeout: 60000 }),
   medium: AdaptiveTimeoutTierSchema.default({ maxIterations: 5, timeout: 180000 }),
-  high: AdaptiveTimeoutTierSchema.default({ maxIterations: 10, timeout: 300000 }),
+  high: AdaptiveTimeoutTierSchema.default({ maxIterations: 8, timeout: 300000 }),
 });
 
 export const UnifiedVerificationConfigSchema = z.object({
@@ -71,7 +71,7 @@ export const UnifiedVerificationConfigSchema = z.object({
 });
 
 export const RalphLoopConfigSchema = z.object({
-  maxIterations: z.number().int().positive().default(10),
+  maxIterations: z.number().int().positive().default(5),
   verificationStrategy: z.enum(['auto', 'manual', 'test-based', 'dimensional']).default('auto'),
   dimensional: DimensionalConfigSchema.default({}),
   adaptiveTimeout: AdaptiveTimeoutConfigSchema.default({}),

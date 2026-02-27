@@ -73,7 +73,7 @@ describe('HiveConfigSchema', () => {
     const result = HiveConfigSchema.parse({});
     expect(result.worker.maxConcurrent).toBe(4);
     expect(result.worker.timeout).toBe(300000);
-    expect(result.ralphLoop.maxIterations).toBe(10);
+    expect(result.ralphLoop.maxIterations).toBe(5);
     expect(result.ralphLoop.verificationStrategy).toBe('auto');
   });
 

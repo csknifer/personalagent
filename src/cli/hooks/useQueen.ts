@@ -202,7 +202,7 @@ export function useQueen({
             status: 'working',
             currentTask: event.task,
             iteration: 0,
-            maxIterations: 10,
+            maxIterations: 5,
             toolCalls: 0,
             llmCalls: 0,
           },

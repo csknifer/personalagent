@@ -54,7 +54,7 @@ export const defaultConfig: Config = {
       timeout: 300000,
     },
     ralphLoop: {
-      maxIterations: 10,
+      maxIterations: 5,
       verificationStrategy: 'auto' as const,
       dimensional: {
         enabled: true,
