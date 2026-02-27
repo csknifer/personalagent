@@ -10,6 +10,8 @@ import type { BudgetGuard } from '../cost/BudgetGuard.js';
 import type { CostRegistry } from '../cost/CostRegistry.js';
 import { getDebugLogger } from '../DebugLogger.js';
 import { callWithTimeout } from './ralphUtils.js';
+import { parseSuccessCriteria } from './dimensional.js';
+import type { CriterionScore } from '../types.js';
 
 export interface RalphLoopOptions {
   maxIterations: number;
@@ -78,6 +80,7 @@ export interface RalphLoopContext {
  */
 export interface UnifiedVerificationResult extends Verification {
   nextAction?: string;
+  dimensions?: CriterionScore[];
 }
 
 /**
@@ -98,6 +101,14 @@ export class UnifiedVerifier implements Verifier {
   }
 
   async check(result: TaskResult): Promise<UnifiedVerificationResult> {
+    const criteria = parseSuccessCriteria(this.successCriteria);
+    if (criteria.length > 1) {
+      return this.checkDimensional(result, criteria);
+    }
+    return this.checkSingle(result);
+  }
+
+  private async checkSingle(result: TaskResult): Promise<UnifiedVerificationResult> {
     const today = new Date().toISOString().split('T')[0];
     const toolInfo = result.toolsUsed && result.toolsUsed.length > 0
       ? `Tools used during execution: ${result.toolsUsed.join(', ')}`
@@ -177,6 +188,134 @@ Rules:
         feedback: 'Verification failed - retry needed',
       };
     }
+  }
+
+  private async checkDimensional(result: TaskResult, criteria: string[]): Promise<UnifiedVerificationResult> {
+    const today = new Date().toISOString().split('T')[0];
+    const criteriaList = criteria.map((c, i) => `${i + 1}. ${c}`).join('\n');
+    const toolOutputInfo = result.toolOutputSummary
+      ? `\n## Tool Output Summary\n${result.toolOutputSummary}\n`
+      : '';
+    const toolFailureInfo = result.toolFailures && result.toolFailures.length > 0
+      ? `\n## ⚠ TOOL FAILURES (programmatically detected — these are facts)\nThe following tools had ALL calls fail (no successful calls):\n${result.toolFailures.map(f => `- **${f.tool}**: ${f.error}`).join('\n')}\nOnly flag data as fabricated if it could ONLY have come from these failed tools. Tools not listed here had at least one successful call.\n`
+      : '';
+
+    const prompt = `Evaluate this task result against EACH criterion independently.
+
+## Current Date
+${today}
+
+## Task Description
+${this.taskDescription || '(not provided)'}
+
+## Task Result
+${result.output}
+${toolOutputInfo}${toolFailureInfo}
+
+## Success Criteria
+${criteriaList}
+
+## Scoring Guide
+- **0.0**: Not attempted at all
+- **0.1-0.3**: Mentioned but largely incomplete or incorrect
+- **0.4-0.6**: Partially addressed with significant gaps
+- **0.7-0.8**: Mostly complete with minor gaps
+- **0.9-1.0**: Fully satisfied with high quality
+
+## Instructions
+For EACH criterion, provide a score and specific, actionable feedback.
+Mark complete=true ONLY if ALL criteria score >= 0.8. Be strict.
+
+IMPORTANT: In the "name" field, use the EXACT criterion text from the numbered list above.
+
+Respond with JSON:
+{
+  "complete": true/false,
+  "feedback": "Overall summary",
+  "dimensions": [
+    { "name": "exact criterion text", "score": 0.0-1.0, "passed": true/false, "feedback": "what specifically is missing or needs improvement" }
+  ]
+}`;
+
+    const log = getDebugLogger();
+    log.debug('UnifiedVerifier', 'Checking result (dimensional)', { resultLength: result.output.length, criteria: criteria.length });
+
+    try {
+      const response = await this.provider.complete(prompt);
+      log.debug('UnifiedVerifier', 'Raw dimensional response', { response: response.slice(0, 300) });
+      return this.parseDimensionalVerification(response, criteria);
+    } catch (err) {
+      log.error('UnifiedVerifier', 'Dimensional verification failed', { error: String(err) });
+      return {
+        complete: false,
+        confidence: 0,
+        feedback: 'Verification failed - retry needed',
+        dimensions: criteria.map(name => ({
+          name, score: 0, passed: false, feedback: 'Verification error',
+        })),
+      };
+    }
+  }
+
+  private parseDimensionalVerification(response: string, criteria: string[]): UnifiedVerificationResult {
+    try {
+      const jsonMatch = response.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        return { complete: false, confidence: 0, feedback: 'Could not parse dimensional verification' };
+      }
+      const parsed = JSON.parse(jsonMatch[0]);
+      const dimensions: CriterionScore[] = (parsed.dimensions || []).map((d: Record<string, unknown>) => ({
+        name: String(d.name || ''),
+        score: Number(d.score) || 0,
+        passed: Boolean(d.passed),
+        feedback: String(d.feedback || ''),
+      }));
+
+      // Normalize dimension names to match original criteria
+      for (const dim of dimensions) {
+        if (!criteria.includes(dim.name)) {
+          const best = this.findBestMatch(dim.name, criteria);
+          if (best) dim.name = best;
+        }
+      }
+
+      // Compute confidence as pessimistic min of scores
+      const computedConfidence = dimensions.length > 0
+        ? Math.min(...dimensions.map(d => d.score))
+        : (Number(parsed.confidence) || 0);
+
+      return {
+        complete: Boolean(parsed.complete),
+        confidence: computedConfidence,
+        feedback: String(parsed.feedback || ''),
+        dimensions,
+      };
+    } catch {
+      return { complete: false, confidence: 0, feedback: 'Dimensional verification parse error' };
+    }
+  }
+
+  private findBestMatch(name: string, criteria: string[]): string | undefined {
+    const lowerName = name.toLowerCase();
+    for (const c of criteria) {
+      const lowerC = c.toLowerCase();
+      if (lowerC.includes(lowerName) || lowerName.includes(lowerC)) {
+        return c;
+      }
+    }
+    const nameWords = new Set(lowerName.split(/\s+/).filter(w => w.length > 2));
+    let bestMatch: string | undefined;
+    let bestScore = 0;
+    for (const c of criteria) {
+      const cWords = c.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+      const overlap = cWords.filter(w => nameWords.has(w)).length;
+      const score = overlap / Math.max(nameWords.size, cWords.length);
+      if (score > bestScore && score > 0.3) {
+        bestScore = score;
+        bestMatch = c;
+      }
+    }
+    return bestMatch;
   }
 
   private parseUnifiedVerification(response: string): UnifiedVerificationResult {
