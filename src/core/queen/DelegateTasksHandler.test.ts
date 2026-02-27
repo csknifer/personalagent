@@ -181,4 +181,89 @@ describe('DelegateTasksHandler', () => {
       expect(result).toContain('Some long output content');
     });
   });
+
+  describe('background execution', () => {
+    it('returns immediately with delegation ID when background is true', async () => {
+      const results = new Map<string, TaskResult>();
+      results.set('task-0', makeResult('Done', ['Finding']));
+
+      const pool = createMockWorkerPool(results);
+      const handler = new DelegateTasksHandler({
+        workerPool: pool,
+        eventHandler: () => {},
+      });
+
+      const result = await handler.execute({
+        tasks: [{ description: 'Background work', successCriteria: 'Done' }],
+        background: true,
+      });
+
+      // Should return immediately with delegation ID
+      expect(result).toContain('Delegated');
+      expect(result).toContain('background');
+      expect(result).toMatch(/d-[a-z0-9]+/); // delegation ID pattern
+    });
+
+    it('stores results that can be retrieved later', async () => {
+      const results = new Map<string, TaskResult>();
+      results.set('task-0', makeResult('Done', ['Finding']));
+
+      const pool = createMockWorkerPool(results);
+      const handler = new DelegateTasksHandler({
+        workerPool: pool,
+        eventHandler: () => {},
+      });
+
+      await handler.execute({
+        tasks: [{ description: 'Background work', successCriteria: 'Done' }],
+        background: true,
+      });
+
+      // Wait for background execution to complete
+      await new Promise(resolve => setTimeout(resolve, 50));
+
+      const pending = handler.collectCompletedResults();
+      expect(pending.length).toBe(1);
+      expect(pending[0]).toContain('Background work');
+      expect(pending[0]).toContain('Finding');
+    });
+
+    it('returns empty array when no background results pending', () => {
+      const pool = createMockWorkerPool(new Map());
+      const handler = new DelegateTasksHandler({
+        workerPool: pool,
+        eventHandler: () => {},
+      });
+
+      expect(handler.collectCompletedResults()).toEqual([]);
+    });
+
+    it('tracks pending delegation count', async () => {
+      // Use a slow mock pool that takes time to complete
+      const pool = {
+        executeTasks: vi.fn(async () => {
+          await new Promise(resolve => setTimeout(resolve, 100));
+          return new Map<string, TaskResult>();
+        }),
+      } as unknown as WorkerPool;
+
+      const handler = new DelegateTasksHandler({
+        workerPool: pool,
+        eventHandler: () => {},
+      });
+
+      expect(handler.hasPendingDelegations).toBe(false);
+
+      await handler.execute({
+        tasks: [{ description: 'Slow task', successCriteria: 'Done' }],
+        background: true,
+      });
+
+      expect(handler.hasPendingDelegations).toBe(true);
+
+      // Wait for completion
+      await new Promise(resolve => setTimeout(resolve, 150));
+      expect(handler.hasPendingDelegations).toBe(false);
+    });
+  });
 });

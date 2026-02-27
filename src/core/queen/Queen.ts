@@ -409,6 +409,17 @@ export class Queen {
     let round = 0;
 
     while (round <= maxToolRounds) {
+      // Inject completed background delegation results before each LLM call
+      const bgResults = this.delegateHandler.collectCompletedResults();
+      if (bgResults.length > 0) {
+        const bgMessage: Message = {
+          role: 'user' as const,
+          content: bgResults.join('\n\n'),
+          timestamp: new Date(),
+        };
+        currentMessages = [...currentMessages, bgMessage];
+      }
+
       const purpose = round === 0 ? 'direct' : 'tool_followup';
       const provider = round === 0
         ? trackedProvider
@@ -457,6 +468,31 @@ export class Queen {
 
       // Append to working message list for next LLM call
       currentMessages = [...currentMessages, assistantToolMsg, userToolResultMsg];
+    }
+
+    // Wait for pending background delegations before returning final response
+    if (this.delegateHandler.hasPendingDelegations) {
+      const maxWaitMs = 300_000; // 5 minutes max
+      const start = Date.now();
+      while (this.delegateHandler.hasPendingDelegations && Date.now() - start < maxWaitMs) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+      const finalBgResults = this.delegateHandler.collectCompletedResults();
+      if (finalBgResults.length > 0) {
+        // Make one more LLM call to incorporate background results
+        const bgMessage: Message = {
+          role: 'user' as const,
+          content: finalBgResults.join('\n\n'),
+          timestamp: new Date(),
+        };
+        currentMessages = [...currentMessages, bgMessage];
+        const response = await callWithTimeout(
+          trackedProvider.withPurpose('tool_followup').chat(currentMessages, { tools, purpose: 'tool_followup' }),
+          STREAM_TIMEOUT_MS,
+          'LLM call',
+        );
+        finalOutput = response.content; // Replace with synthesized version incorporating background results
+      }
     }
 
     return { content: finalOutput, tokenUsage: totalTokenUsage };
