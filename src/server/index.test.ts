@@ -1,3 +1,4 @@
+/// <reference types="vitest/globals" />
 import { resolve, sep } from 'path';
 import { isPathInsideDir } from './index.js';
 
