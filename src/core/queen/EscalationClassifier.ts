@@ -23,6 +23,7 @@ export interface EscalationContext {
   dependentTaskIds: string[];
   completedTaskCount?: number;
   totalTaskCount?: number;
+  remainingBudgetPercent?: number;
 }
 
 /**
@@ -58,6 +59,16 @@ export function classifyEscalation(ctx: EscalationContext): EscalationDecision {
   // Replan budget exhausted — always pass
   if (replanCount >= maxReplans) {
     return { action: 'pass', reason: `Replan limit reached (${replanCount}/${maxReplans})` };
+  }
+
+  // Budget nearly exhausted — suppress replanning to avoid wasting remaining budget on LLM calls
+  if (ctx.remainingBudgetPercent !== undefined && ctx.remainingBudgetPercent < 15) {
+    if (!result.success) {
+      return {
+        action: 'accept_partial',
+        reason: `Budget nearly exhausted (${ctx.remainingBudgetPercent.toFixed(0)}% remaining) — using best partial result`,
+      };
+    }
   }
 
   // If failure taxonomy is available, use it for richer decisions

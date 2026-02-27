@@ -210,6 +210,81 @@ describe('classifyEscalation', () => {
   });
 });
 
+describe('budget-aware escalation', () => {
+  it('should prefer accept_partial over replan when budget nearly exhausted (taxonomy path)', () => {
+    const decision = classifyEscalation({
+      result: makeResult({
+        exitReason: 'stall',
+        failure: makeFailure({
+          category: FailureCategory.Strategy,
+          suggestedRecovery: RecoveryAction.Replan,
+        }),
+      }),
+      replanCount: 0,
+      maxReplans: 3,
+      dependentTaskIds: ['task-2'],
+      remainingBudgetPercent: 10,
+    });
+
+    expect(decision.action).toBe('accept_partial');
+    expect(decision.reason).toContain('Budget');
+  });
+
+  it('should prefer accept_partial over replan when budget nearly exhausted (legacy path)', () => {
+    const decision = classifyEscalation({
+      result: makeResult({ exitReason: 'stall' }),
+      replanCount: 0,
+      maxReplans: 3,
+      dependentTaskIds: [],
+      remainingBudgetPercent: 5,
+    });
+
+    expect(decision.action).toBe('accept_partial');
+    expect(decision.reason).toContain('Budget');
+  });
+
+  it('should allow replan when budget is sufficient', () => {
+    const decision = classifyEscalation({
+      result: makeResult({
+        exitReason: 'stall',
+        failure: makeFailure({
+          category: FailureCategory.Strategy,
+          suggestedRecovery: RecoveryAction.Replan,
+        }),
+      }),
+      replanCount: 0,
+      maxReplans: 3,
+      dependentTaskIds: ['task-2'],
+      remainingBudgetPercent: 80,
+    });
+
+    expect(decision.action).toBe('replan');
+  });
+
+  it('should not suppress when budget percent is undefined', () => {
+    const decision = classifyEscalation({
+      result: makeResult({ exitReason: 'stall' }),
+      replanCount: 0,
+      maxReplans: 3,
+      dependentTaskIds: [],
+    });
+
+    expect(decision.action).toBe('replan');
+  });
+
+  it('should pass through successful tasks regardless of low budget', () => {
+    const decision = classifyEscalation({
+      result: makeResult({ success: true }),
+      replanCount: 0,
+      maxReplans: 3,
+      dependentTaskIds: [],
+      remainingBudgetPercent: 5,
+    });
+
+    expect(decision.action).toBe('pass');
+  });
+});
+
 describe('failure-taxonomy-driven escalation', () => {
   it('should retry with backoff for transient infrastructure failures', () => {
     const result = makeResult({
