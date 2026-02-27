@@ -43,9 +43,7 @@ describe('Queen', () => {
     it('should handle a direct request end-to-end', async () => {
       const provider = new MockProvider({
         responses: [
-          // 1st: TaskPlanner.plan() via complete() — returns direct
-          JSON.stringify({ type: 'direct', reasoning: 'Simple question' }),
-          // 2nd: handleDirectRequest() via chat() — the actual response
+          // No planning step — goes straight to handleDirectRequest() via chat()
           'Hello! How can I help you today?',
         ],
       });
@@ -59,7 +57,6 @@ describe('Queen', () => {
     it('should add messages to memory', async () => {
       const provider = new MockProvider({
         responses: [
-          JSON.stringify({ type: 'direct', reasoning: 'Simple' }),
           'Response text',
         ],
       });
@@ -79,7 +76,6 @@ describe('Queen', () => {
     it('should emit phase_change events in order', async () => {
       const provider = new MockProvider({
         responses: [
-          JSON.stringify({ type: 'direct', reasoning: 'Simple' }),
           'OK',
         ],
       });
@@ -92,11 +88,8 @@ describe('Queen', () => {
         .filter((e): e is Extract<AgentEvent, { type: 'phase_change' }> => e.type === 'phase_change')
         .map(e => e.phase);
 
-      expect(phaseEvents).toContain('planning');
       expect(phaseEvents).toContain('executing');
       expect(phaseEvents).toContain('idle');
-      // planning should come before executing
-      expect(phaseEvents.indexOf('planning')).toBeLessThan(phaseEvents.indexOf('executing'));
     });
   });
 
@@ -104,8 +97,6 @@ describe('Queen', () => {
     it('should execute tool calls and return follow-up response', async () => {
       const provider = new MockProvider({
         responses: [
-          // TaskPlanner → direct
-          JSON.stringify({ type: 'direct', reasoning: 'Needs tools' }),
           // handleDirectRequest 1st chat() → triggers tool call
           'Let me search for that...',
           // handleDirectRequest 2nd chat() (follow-up after tool results)
@@ -114,10 +105,8 @@ describe('Queen', () => {
         supportsTools: true,
       });
 
-      // Use toolCallsQueue: one entry per chat() call.
-      // Call 1 = TaskPlanner.plan(), Call 2 = direct request (tool call), Call 3 = follow-up (no tools).
+      // No planning step — tool calls queue maps directly to chat() calls.
       provider.toolCallsQueue = [
-        undefined, // plan call — no tools
         [{ id: 'tc-1', name: 'web_search', arguments: { query: 'test' } }], // direct request — trigger tool
         undefined, // follow-up — no tools
       ];
@@ -131,7 +120,7 @@ describe('Queen', () => {
       const { queen } = createTestQueen({ provider, mcpServer });
       const result = await queen.processMessage('Search for cats');
 
-      // Non-streaming path now accumulates text across tool rounds (matching streaming behavior)
+      // Non-streaming path accumulates text across tool rounds
       expect(result).toBe('Let me search for that...Based on the search results, here is your answer.');
       expect(mcpServer.executeCalls).toHaveLength(1);
       expect(mcpServer.executeCalls[0].name).toBe('web_search');
@@ -142,9 +131,6 @@ describe('Queen', () => {
     it('includes delegate_tasks in tool definitions sent to LLM', async () => {
       const provider = new MockProvider({
         responses: [
-          // TaskPlanner.plan() → direct
-          JSON.stringify({ type: 'direct', reasoning: 'Simple' }),
-          // handleDirectRequest chat() → simple response
           'Hello!',
         ],
         supportsTools: true,
@@ -159,8 +145,8 @@ describe('Queen', () => {
       const { queen } = createTestQueen({ provider, mcpServer });
       await queen.processMessage('Hi');
 
-      // The direct request chat call is the 2nd call (1st is planning)
-      const directCall = provider.chatCalls[1];
+      // No planning step — first chat call is the direct request
+      const directCall = provider.chatCalls[0];
       const toolNames = directCall?.options?.tools?.map((t: any) => t.name) ?? [];
       expect(toolNames).toContain('delegate_tasks');
       expect(toolNames).toContain('web_search');
@@ -171,23 +157,20 @@ describe('Queen', () => {
     it('intercepts delegate_tasks tool call and dispatches to DelegateTasksHandler', async () => {
       const provider = new MockProvider({
         responses: [
-          // 1: TaskPlanner.plan() → direct
-          JSON.stringify({ type: 'direct', reasoning: 'Research task' }),
-          // 2: handleDirectRequest chat() → Queen decides to delegate (tool call)
+          // 1: handleDirectRequest chat() → Queen decides to delegate (tool call)
           'I will research this for you.',
-          // 3: Worker 1 execution (ralphLoop chat)
+          // 2: Worker 1 execution (ralphLoop chat)
           'Found social media profiles for John Doe.',
-          // 4: Worker 1 verification (LLMVerifier complete())
+          // 3: Worker 1 verification (LLMVerifier complete())
           JSON.stringify({ complete: true, confidence: 1.0 }),
-          // 5: handleDirectRequest follow-up chat() → Queen synthesizes
+          // 4: handleDirectRequest follow-up chat() → Queen synthesizes
           'Based on my research, John Doe has active social media profiles.',
         ],
         supportsTools: true,
       });
 
-      // Queue tool calls per chat() call
+      // No planning step — tool calls queue maps directly to chat() calls
       provider.toolCallsQueue = [
-        undefined, // plan call — no tools
         [{ id: 'tc-1', name: 'delegate_tasks', arguments: {
           tasks: [
             { description: 'Search social media for John Doe', successCriteria: 'Find profiles' },
@@ -220,88 +203,27 @@ describe('Queen', () => {
     });
   });
 
-  describe('processMessage() — decomposed path', () => {
-    it('should decompose into tasks, execute workers, and aggregate', async () => {
+  describe('processMessage() — always direct execution', () => {
+    it('should always use direct execution without planning step', async () => {
       const provider = new MockProvider({
         responses: [
-          // TaskPlanner.plan() → decomposed with 2 tasks
-          JSON.stringify({
-            type: 'decomposed',
-            reasoning: 'Multi-part request',
-            tasks: [
-              { id: 't1', description: 'Part 1', successCriteria: 'Done', dependencies: [], priority: 1 },
-              { id: 't2', description: 'Part 2', successCriteria: 'Done', dependencies: [], priority: 2 },
-            ],
-          }),
-          // Worker 1 response (ralphLoop chat)
-          'Result for part 1',
-          // Worker 1 verification (LLMVerifier uses complete())
-          JSON.stringify({ complete: true, confidence: 1.0 }),
-          // Worker 2 response
-          'Result for part 2',
-          // Worker 2 verification
-          JSON.stringify({ complete: true, confidence: 1.0 }),
-          // Queen.aggregateResults() synthesis call
-          'Combined answer from both parts.',
-        ],
-      });
-
-      const events: AgentEvent[] = [];
-      const { queen } = createTestQueen({ provider, events });
-      const result = await queen.processMessage('Do two things at once');
-
-      expect(result).toBe('Combined answer from both parts.');
-
-      // Should have worker_spawned events
-      const spawnedEvents = events.filter(e => e.type === 'worker_spawned');
-      expect(spawnedEvents).toHaveLength(2);
-    });
-
-    it('should return single worker result without synthesis when only 1 task', async () => {
-      const provider = new MockProvider({
-        responses: [
-          JSON.stringify({
-            type: 'decomposed',
-            reasoning: 'Single subtask',
-            tasks: [
-              { id: 't1', description: 'Only task', successCriteria: 'Done', dependencies: [], priority: 1 },
-            ],
-          }),
-          'Single worker output',
-          JSON.stringify({ complete: true, confidence: 1.0 }),
+          // Only one LLM call — no separate planning call
+          'Here is the answer to your complex question.',
         ],
       });
 
       const { queen } = createTestQueen({ provider });
-      const result = await queen.processMessage('Do one thing');
+      const result = await queen.processMessage('Research quantum computing advances');
 
-      // With only 1 result, Queen returns it directly without aggregation
-      expect(result).toBe('Single worker output');
-    });
-  });
-
-  describe('processMessage() — fallback behavior', () => {
-    it('should fall back to direct when task planner response is unparseable', async () => {
-      const provider = new MockProvider({
-        responses: [
-          // TaskPlanner gets garbage → defaults to direct
-          'not valid json at all',
-          // Direct request response
-          'Handled directly',
-        ],
-      });
-
-      const { queen } = createTestQueen({ provider });
-      const result = await queen.processMessage('Anything');
-
-      expect(result).toBe('Handled directly');
+      expect(result).toBe('Here is the answer to your complex question.');
+      // Verify only 1 LLM call — no planning call
+      expect(provider.chatCalls).toHaveLength(1);
     });
   });
 
   describe('processMessage() — error handling', () => {
     it('should return error content and emit error event when provider fails on direct path', async () => {
-      // Provider that always throws — TaskPlanner.plan() will catch the error
-      // and default to 'direct', then handleDirectRequest() will also throw.
+      // Provider that always throws — handleDirectRequest() will throw.
       // processMessage catches the error and returns an error message instead of throwing.
       const provider = new MockProvider();
       provider.errorToThrow = new Error('Provider is down');
@@ -327,7 +249,6 @@ describe('Queen', () => {
     it('should clear memory and tasks', async () => {
       const provider = new MockProvider({
         responses: [
-          JSON.stringify({ type: 'direct', reasoning: 'Simple' }),
           'Response',
         ],
       });

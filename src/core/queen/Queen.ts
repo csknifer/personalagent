@@ -221,87 +221,17 @@ export class Queen {
     // Check for matching skills and load context
     await this.loadSkillContext(userMessage);
 
-    // Emit planning phase
-    this.emitPhaseChange('planning', 'Analyzing and planning task...');
-
-    // Plan the task
+    // Always enter direct execution — Queen decides dynamically
+    // whether to use delegate_tasks tool for parallel work
     const log = getDebugLogger();
-    log.debug('Queen', 'Planning task', { userMessage: userMessage.slice(0, 100), memoryMessages: this.memory.getMessageCount(), memoryTokens: this.memory.getTotalTokensUsed() });
+    log.debug('Queen', 'Processing request', { userMessage: userMessage.slice(0, 100), memoryMessages: this.memory.getMessageCount(), memoryTokens: this.memory.getTotalTokensUsed() });
 
-    let conversationContext = this.buildConversationContext();
-    const tools = this.mcpServer?.getToolDefinitions();
-
-    // Query relevant memories and prepend to conversation context
-    const memoryContext = await this.queryRelevantMemories(userMessage);
-    if (memoryContext) {
-      const prefix = `## Relevant Memories\n${memoryContext}\n\n`;
-      conversationContext = conversationContext ? prefix + conversationContext : prefix;
-    }
-
-    const planOptions = {
-      toolNames: tools?.map(t => t.name),
-      toolDescriptions: tools?.map(t => t.description),
-      skillContext: this.currentSkillContext
-        ? `Skill: ${this.currentSkillContext.name}\n${this.currentSkillContext.instructions.slice(0, PLANNER_SKILL_CONTEXT_LIMIT)}`
-        : undefined,
-    };
-
-    // Fast heuristic classifier: skip LLM planning call for obviously simple messages
-    let plan: TaskPlan | undefined;
-    const fcConfig = this.config.hive.queen.fastClassifier;
-    if (fcConfig && fcConfig.enabled !== false) {
-      const classification = classifyFast(userMessage, conversationContext, {
-        enabled: true,
-        maxTokensForDirect: fcConfig.maxTokensForDirect ?? 50,
-        maxTokensForUncertain: fcConfig.maxTokensForUncertain ?? 200,
-      });
-      if (classification.decision === 'direct') {
-        plan = { type: 'direct', reasoning: `Fast: ${classification.reason}` };
-        log.info('Queen', `Fast classifier: direct (${classification.reason}, confidence: ${classification.confidence})`);
-      }
-    }
-
-    if (!plan) {
-      plan = await this.taskPlanner.plan(userMessage, conversationContext, planOptions);
-    }
-
-    log.info('Queen', `Plan: ${plan.type}`, { reasoning: plan.reasoning, taskCount: plan.tasks?.length ?? 0, tasks: plan.tasks?.map(t => t.description.slice(0, 80)) });
-
-    // Diagnostic: show what the planner decided
-    this.emitEvent({ type: 'thinking', content: `Plan: ${plan.type}${plan.reasoning ? ` — ${plan.reasoning}` : ''}` });
+    this.emitPhaseChange('executing', 'Processing request...');
 
     let result: { content: string; tokenUsage?: TokenUsage };
 
     try {
-      if (plan.type === 'direct') {
-        // Emit executing phase for direct requests
-        this.emitPhaseChange('executing', 'Handling request directly...');
-        log.debug('Queen', 'Direct request path');
-        result = await this.handleDirectRequest(userMessage);
-      } else {
-        // Emit executing phase for decomposed requests
-        const taskSummary = plan.tasks?.map(t => t.description.slice(0, 60)).join(' | ') || '';
-        this.emitPhaseChange('executing', `Executing ${plan.tasks?.length || 0} tasks...`);
-        this.emitEvent({ type: 'thinking', content: `Tasks: ${taskSummary}` });
-        log.debug('Queen', 'Decomposed request path', { taskCount: plan.tasks?.length });
-        result = await this.handleDecomposedRequest(plan, userMessage);
-
-        // If workers returned empty content, fall back to direct handling
-        if (!result.content.trim()) {
-          this.emitEvent({ type: 'thinking', content: 'Worker returned empty, handling directly...' });
-          result = await this.handleDirectRequest(userMessage);
-        } else {
-          // Run evaluator-optimizer loop on decomposed results
-          const taskResultsMap = new Map<string, TaskResult>();
-          for (const task of this.currentTasks) {
-            if (task.result) taskResultsMap.set(task.id, task.result);
-          }
-          result = await this.runEvaluationLoop(result, userMessage, this.currentTasks, taskResultsMap);
-
-          // Fire-and-forget: write task outcome to memory store
-          this.writeTaskMemory(userMessage, this.currentTasks, taskResultsMap).catch(() => {});
-        }
-      }
+      result = await this.handleDirectRequest(userMessage);
     } catch (error) {
       // Ensure phase resets even on unrecoverable errors
       const cleanMessage = formatErrorMessage(error);
@@ -1157,147 +1087,83 @@ ${taskResultsSection}${failedSection}
       // Check for matching skills and load context
       await this.loadSkillContext(userMessage);
 
-      // Plan the task (with same planOptions as processMessage)
-      this.emitPhaseChange('planning', 'Analyzing and planning task...');
-      let conversationContext = this.buildConversationContext();
+      // Always enter streaming direct execution — Queen decides dynamically
+      // whether to use delegate_tasks tool for parallel work
+      this.emitPhaseChange('executing', 'Streaming response...');
+
       const mcpTools = this.mcpServer?.getToolDefinitions() ?? [];
       const tools = [...mcpTools, DELEGATE_TASKS_TOOL];
+      const messages = this.prepareDirectMessages(this.memory.getContextMessages(), tools);
 
-      // Query relevant memories and prepend to conversation context
-      const memoryContext = await this.queryRelevantMemories(userMessage);
-      if (memoryContext) {
-        const prefix = `## Relevant Memories\n${memoryContext}\n\n`;
-        conversationContext = conversationContext ? prefix + conversationContext : prefix;
+      const trackedProvider = isTrackedProvider(this.provider)
+        ? this.provider.withPurpose('direct')
+        : wrapWithTracking(this.provider, { defaultPurpose: 'direct' });
+
+      // Stream with end-to-end tool support
+      let currentMessages = [...messages];
+      let allStreamedText = ''; // Accumulates text across all tool rounds
+      let toolRound = 0;
+      const maxToolRounds = 10;
+      let continueStreaming = true;
+
+      while (continueStreaming && toolRound <= maxToolRounds) {
+        const pendingToolCalls: ToolCall[] = [];
+        const purpose = toolRound === 0 ? 'direct' : 'tool_followup';
+        const streamProvider = toolRound === 0
+          ? trackedProvider
+          : trackedProvider.withPurpose('tool_followup');
+
+        const stream = streamWithTimeout(
+          streamProvider.chatStream(currentMessages, { tools, purpose }),
+          STREAM_TIMEOUT_MS,
+          'LLM streaming call',
+        );
+        for await (const chunk of stream) {
+          if (chunk.type === 'text' && chunk.content) {
+            fullResponse += chunk.content;
+            yield chunk;
+          } else if (chunk.type === 'tool_call' && chunk.toolCall) {
+            pendingToolCalls.push(chunk.toolCall);
+            yield chunk;
+          }
+        }
+
+        // No tool calls — streaming is complete
+        const hasDelegateTasksCalls = pendingToolCalls.some(tc => tc.name === 'delegate_tasks');
+        if (pendingToolCalls.length === 0 || (!this.mcpServer && !hasDelegateTasksCalls)) {
+          continueStreaming = false;
+          break;
+        }
+
+        // Process tool calls and prepare for next streaming round
+        toolRound++;
+        if (toolRound > maxToolRounds) break;
+
+        const toolResults = await this.executeToolCalls(pendingToolCalls);
+        this.emitToolDiagnostics(pendingToolCalls, toolResults);
+        const { assistantToolMsg, userToolResultMsg } = this.buildToolInteractionMessages(
+          fullResponse, pendingToolCalls, toolResults,
+        );
+
+        // Track total accumulated text across all rounds for the final memory entry.
+        // Reset the per-round buffer so the next streaming round starts fresh,
+        // but preserve the full text for the final assistant message.
+        allStreamedText += fullResponse;
+        fullResponse = '';
+        currentMessages = [...currentMessages, assistantToolMsg, userToolResultMsg];
       }
 
-      const planOptions = {
-        toolNames: mcpTools?.map(t => t.name),
-        toolDescriptions: mcpTools?.map(t => t.description),
-        skillContext: this.currentSkillContext
-          ? `Skill: ${this.currentSkillContext.name}\n${this.currentSkillContext.instructions.slice(0, PLANNER_SKILL_CONTEXT_LIMIT)}`
-          : undefined,
-      };
+      // Combine all streamed text across rounds
+      fullResponse = allStreamedText + fullResponse;
 
-      // Fast heuristic classifier for streaming path
-      let plan: TaskPlan | undefined;
-      const fcConfig = this.config.hive.queen.fastClassifier;
-      if (fcConfig && fcConfig.enabled !== false) {
-        const classification = classifyFast(userMessage, conversationContext, {
-          enabled: true,
-          maxTokensForDirect: fcConfig.maxTokensForDirect ?? 50,
-          maxTokensForUncertain: fcConfig.maxTokensForUncertain ?? 200,
-        });
-        if (classification.decision === 'direct') {
-          plan = { type: 'direct', reasoning: `Fast: ${classification.reason}` };
-        }
-      }
-      if (!plan) {
-        plan = await this.taskPlanner.plan(userMessage, conversationContext, planOptions);
-      }
-
-      // Diagnostic: show planner decision
-      this.emitEvent({ type: 'thinking', content: `Plan: ${plan.type}${plan.reasoning ? ` — ${plan.reasoning}` : ''}` });
-
-      if (plan.type === 'direct') {
-        // Stream the direct response path
-        this.emitPhaseChange('executing', 'Streaming response...');
-
-        const messages = this.prepareDirectMessages(this.memory.getContextMessages(), tools);
-
-        const trackedProvider = isTrackedProvider(this.provider)
-          ? this.provider.withPurpose('direct')
-          : wrapWithTracking(this.provider, { defaultPurpose: 'direct' });
-
-        // Stream with end-to-end tool support
-        let currentMessages = [...messages];
-        let allStreamedText = ''; // Accumulates text across all tool rounds
-        let toolRound = 0;
-        const maxToolRounds = 10;
-        let continueStreaming = true;
-
-        while (continueStreaming && toolRound <= maxToolRounds) {
-          const pendingToolCalls: ToolCall[] = [];
-          const purpose = toolRound === 0 ? 'direct' : 'tool_followup';
-          const streamProvider = toolRound === 0
-            ? trackedProvider
-            : trackedProvider.withPurpose('tool_followup');
-
-          const stream = streamWithTimeout(
-            streamProvider.chatStream(currentMessages, { tools, purpose }),
-            STREAM_TIMEOUT_MS,
-            'LLM streaming call',
-          );
-          for await (const chunk of stream) {
-            if (chunk.type === 'text' && chunk.content) {
-              fullResponse += chunk.content;
-              yield chunk;
-            } else if (chunk.type === 'tool_call' && chunk.toolCall) {
-              pendingToolCalls.push(chunk.toolCall);
-              yield chunk;
-            }
-          }
-
-          // No tool calls — streaming is complete
-          const hasDelegateTasksCalls = pendingToolCalls.some(tc => tc.name === 'delegate_tasks');
-          if (pendingToolCalls.length === 0 || (!this.mcpServer && !hasDelegateTasksCalls)) {
-            continueStreaming = false;
-            break;
-          }
-
-          // Process tool calls and prepare for next streaming round
-          toolRound++;
-          if (toolRound > maxToolRounds) break;
-
-          const toolResults = await this.executeToolCalls(pendingToolCalls);
-          this.emitToolDiagnostics(pendingToolCalls, toolResults);
-          const { assistantToolMsg, userToolResultMsg } = this.buildToolInteractionMessages(
-            fullResponse, pendingToolCalls, toolResults,
-          );
-
-          // Track total accumulated text across all rounds for the final memory entry.
-          // Reset the per-round buffer so the next streaming round starts fresh,
-          // but preserve the full text for the final assistant message.
-          allStreamedText += fullResponse;
-          fullResponse = '';
-          currentMessages = [...currentMessages, assistantToolMsg, userToolResultMsg];
-        }
-
-        // Combine all streamed text across rounds
-        fullResponse = allStreamedText + fullResponse;
-
-        // Fallback: if no text was produced at all, use non-streaming path
-        if (!fullResponse.trim()) {
-          // Roll back any tool interaction messages added during the failed streaming attempt
-          // to prevent duplicate/incoherent messages when the fallback adds its own
-          this.memory.truncateTo(messageCountAfterUser);
-          this.emitEvent({ type: 'thinking', content: 'Finalizing response...' });
-          const fallbackResult = await this.handleDirectRequest(userMessage);
-          fullResponse = fallbackResult.content;
-          yield { type: 'text', content: fullResponse };
-        }
-      } else {
-        // Decomposed request: fall back to non-streaming
-        this.emitPhaseChange('executing', `Executing ${plan.tasks?.length || 0} tasks...`);
-        let result = await this.handleDecomposedRequest(plan, userMessage);
-
-        // If workers returned empty content, fall back to direct handling
-        if (!result.content.trim()) {
-          this.emitEvent({ type: 'thinking', content: 'Worker returned empty, handling directly...' });
-          const directResult = await this.handleDirectRequest(userMessage);
-          result = directResult;
-        } else {
-          // Run evaluator-optimizer loop on decomposed results
-          const taskResultsMap = new Map<string, TaskResult>();
-          for (const task of this.currentTasks) {
-            if (task.result) taskResultsMap.set(task.id, task.result);
-          }
-          result = await this.runEvaluationLoop(result, userMessage, this.currentTasks, taskResultsMap);
-
-          // Fire-and-forget: write task outcome to memory store
-          this.writeTaskMemory(userMessage, this.currentTasks, taskResultsMap).catch(() => {});
-        }
-
-        fullResponse = result.content;
+      // Fallback: if no text was produced at all, use non-streaming path
+      if (!fullResponse.trim()) {
+        // Roll back any tool interaction messages added during the failed streaming attempt
+        // to prevent duplicate/incoherent messages when the fallback adds its own
+        this.memory.truncateTo(messageCountAfterUser);
+        this.emitEvent({ type: 'thinking', content: 'Finalizing response...' });
+        const fallbackResult = await this.handleDirectRequest(userMessage);
+        fullResponse = fallbackResult.content;
         yield { type: 'text', content: fullResponse };
       }
     } catch (error) {

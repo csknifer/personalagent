@@ -1,8 +1,9 @@
 /**
  * Queen.streamMessage() tests
  *
- * Tests the streaming path which has its own tool-call loop,
- * decomposed fallback, and error handling distinct from processMessage().
+ * Tests the streaming path which has its own tool-call loop
+ * and error handling distinct from processMessage().
+ * The Queen always enters direct streaming — delegate_tasks triggers workers.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -36,7 +37,7 @@ describe('Queen.streamMessage()', () => {
     it('should yield text chunks and done for a simple direct request', async () => {
       const provider = new MockProvider({
         responses: [
-          JSON.stringify({ type: 'direct', reasoning: 'Simple' }),
+          // No planning step — goes straight to streaming direct execution
           'Streamed response text',
         ],
       });
@@ -55,7 +56,6 @@ describe('Queen.streamMessage()', () => {
     it('should add messages to memory after streaming', async () => {
       const provider = new MockProvider({
         responses: [
-          JSON.stringify({ type: 'direct', reasoning: 'Simple' }),
           'Stream result',
         ],
       });
@@ -76,9 +76,7 @@ describe('Queen.streamMessage()', () => {
     it('should handle tool calls during streaming and yield follow-up text', async () => {
       const provider = new MockProvider({
         responses: [
-          // TaskPlanner → direct
-          JSON.stringify({ type: 'direct', reasoning: 'Needs tools' }),
-          // 1st stream round: triggers tool call
+          // 1st stream round: triggers tool call (no planning step)
           'Searching...',
           // 2nd stream round: follow-up after tool results
           'Found the answer: 42',
@@ -86,9 +84,8 @@ describe('Queen.streamMessage()', () => {
         supportsTools: true,
       });
 
-      // Tool calls on 2nd chat() call only (direct request)
+      // No planning step — tool calls queue maps directly to chat() calls
       provider.toolCallsQueue = [
-        undefined, // plan
         [{ id: 'tc-1', name: 'web_search', arguments: { query: 'meaning of life' } }],
         undefined, // follow-up
       ];
@@ -117,26 +114,45 @@ describe('Queen.streamMessage()', () => {
     });
   });
 
-  describe('decomposed streaming fallback', () => {
-    it('should yield decomposed result as a single text chunk', async () => {
+  describe('delegate_tasks streaming', () => {
+    it('should handle delegate_tasks during streaming', async () => {
       const provider = new MockProvider({
         responses: [
-          JSON.stringify({
-            type: 'decomposed',
-            reasoning: 'Multi-part',
-            tasks: [
-              { id: 't1', description: 'Task 1', successCriteria: 'Done', dependencies: [], priority: 1 },
-            ],
-          }),
+          // 1st stream: Queen decides to delegate (tool call)
+          'Let me research that.',
+          // Worker execution
           'Worker output',
           JSON.stringify({ complete: true, confidence: 1.0 }),
+          // 2nd stream: Queen synthesizes from delegate_tasks results
+          'Here are my findings.',
         ],
+        supportsTools: true,
       });
 
-      const queen = new Queen({ provider, config: createMockConfig() });
-      const text = await collectText(queen.streamMessage('Complex request'));
+      provider.toolCallsQueue = [
+        [{ id: 'tc-1', name: 'delegate_tasks', arguments: {
+          tasks: [{ description: 'Research topic', successCriteria: 'Done' }],
+        }}],
+        undefined, // Worker chat
+        undefined, // Worker verification
+        undefined, // Follow-up
+      ];
 
-      expect(text).toBe('Worker output');
+      const mcpServer = new MockMCPServer({
+        toolDefinitions: [{ name: 'web_search', description: 'Search', parameters: {} }],
+      });
+
+      const queen = new Queen({
+        provider,
+        mcpServer: mcpServer as any,
+        config: createMockConfig(),
+      });
+
+      const text = await collectText(queen.streamMessage('Research quantum computing'));
+      expect(text).toContain('research');
+
+      // delegate_tasks should NOT be sent to MCP
+      expect(mcpServer.executeCalls.filter(c => c.name === 'delegate_tasks')).toHaveLength(0);
     });
   });
 
@@ -180,10 +196,9 @@ describe('Queen.streamMessage()', () => {
   });
 
   describe('phase events during streaming', () => {
-    it('should emit planning → executing → idle phases', async () => {
+    it('should emit executing → idle phases', async () => {
       const provider = new MockProvider({
         responses: [
-          JSON.stringify({ type: 'direct', reasoning: 'Simple' }),
           'OK',
         ],
       });
@@ -201,7 +216,6 @@ describe('Queen.streamMessage()', () => {
         .filter((e): e is Extract<AgentEvent, { type: 'phase_change' }> => e.type === 'phase_change')
         .map(e => e.phase);
 
-      expect(phases).toContain('planning');
       expect(phases).toContain('executing');
       expect(phases).toContain('idle');
     });

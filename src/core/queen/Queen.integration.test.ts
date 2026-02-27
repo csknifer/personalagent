@@ -1,8 +1,9 @@
 /**
  * Queen integration tests — full flow without module-level mocking
  *
- * These tests exercise the real Queen → TaskPlanner → WorkerPool → Worker → RalphLoop
+ * These tests exercise the real Queen → WorkerPool → Worker → RalphLoop
  * pipeline, with only MockProvider and MockMCPServer injected via constructor.
+ * The Queen always enters direct execution and uses delegate_tasks for parallel work.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -15,9 +16,7 @@ describe('Queen integration', () => {
     const events: AgentEvent[] = [];
     const provider = new MockProvider({
       responses: [
-        // TaskPlanner.plan() → direct
-        JSON.stringify({ type: 'direct', reasoning: 'Simple greeting' }),
-        // handleDirectRequest() chat → final answer
+        // handleDirectRequest() chat → final answer (no planning step)
         'Hello! I am your assistant.',
       ],
     });
@@ -40,38 +39,47 @@ describe('Queen integration', () => {
     expect(userMsg?.content).toBe('Hello');
     expect(assistantMsg?.content).toBe('Hello! I am your assistant.');
 
-    // Verify event flow: planning → executing → idle
+    // Verify event flow: executing → idle (no planning phase)
     const phases = events
       .filter((e): e is Extract<AgentEvent, { type: 'phase_change' }> => e.type === 'phase_change')
       .map(e => e.phase);
-    expect(phases).toEqual(['planning', 'executing', 'idle']);
+    expect(phases).toEqual(['executing', 'idle']);
   });
 
-  it('should complete a full decomposed request flow with 2 tasks', async () => {
+  it('should delegate to workers via delegate_tasks tool call', async () => {
     const events: AgentEvent[] = [];
     const provider = new MockProvider({
       responses: [
-        // TaskPlanner.plan() → decomposed
-        JSON.stringify({
-          type: 'decomposed',
-          reasoning: 'Two independent sub-tasks',
-          tasks: [
-            { id: 'task-a', description: 'Research topic A', successCriteria: 'Summary provided', dependencies: [], priority: 1 },
-            { id: 'task-b', description: 'Research topic B', successCriteria: 'Summary provided', dependencies: [], priority: 2 },
-          ],
-        }),
-        // Worker A: ralphLoop chat response
+        // 1: Queen direct request → decides to delegate (tool call)
+        'Let me research both topics.',
+        // 2: Worker A: ralphLoop chat response
         'Research results for topic A',
-        // Worker A: LLMVerifier verification
+        // 3: Worker A: LLMVerifier verification
         JSON.stringify({ complete: true, confidence: 0.95 }),
-        // Worker B: ralphLoop chat response
+        // 4: Worker B: ralphLoop chat response
         'Research results for topic B',
-        // Worker B: LLMVerifier verification
+        // 5: Worker B: LLMVerifier verification
         JSON.stringify({ complete: true, confidence: 0.9 }),
-        // Queen aggregation synthesis
+        // 6: Queen follow-up after delegate_tasks results
         'Here is a combined summary of topics A and B.',
       ],
+      supportsTools: true,
     });
+
+    // Tool calls queue: entry per chat() call
+    provider.toolCallsQueue = [
+      [{ id: 'tc-1', name: 'delegate_tasks', arguments: {
+        tasks: [
+          { description: 'Research topic A', successCriteria: 'Summary provided' },
+          { description: 'Research topic B', successCriteria: 'Summary provided' },
+        ],
+      }}],
+      undefined, // Worker A chat
+      undefined, // Worker A verification
+      undefined, // Worker B chat
+      undefined, // Worker B verification
+      undefined, // Queen follow-up
+    ];
 
     const config = createMockConfig({
       hive: {
@@ -81,15 +89,22 @@ describe('Queen integration', () => {
       },
     });
 
+    const mcpServer = new MockMCPServer({
+      toolDefinitions: [
+        { name: 'web_search', description: 'Search', parameters: {} },
+      ],
+    });
+
     const queen = new Queen({
       provider,
+      mcpServer: mcpServer as any,
       config,
       onEvent: (e) => events.push(e),
     });
 
     const result = await queen.processMessage('Research topics A and B');
 
-    expect(result).toBe('Here is a combined summary of topics A and B.');
+    expect(result).toContain('combined summary');
 
     // Check worker events were emitted
     const spawned = events.filter(e => e.type === 'worker_spawned');
@@ -97,16 +112,17 @@ describe('Queen integration', () => {
 
     const completed = events.filter(e => e.type === 'worker_completed');
     expect(completed.length).toBe(2);
+
+    // delegate_tasks should NOT be sent to MCP
+    expect(mcpServer.executeCalls.filter(c => c.name === 'delegate_tasks')).toHaveLength(0);
   });
 
   it('should handle a multi-turn conversation accumulating memory', async () => {
     const provider = new MockProvider({
       responses: [
-        // Turn 1: plan → direct
-        JSON.stringify({ type: 'direct', reasoning: 'Simple' }),
+        // Turn 1: direct response (no planning)
         'First response',
-        // Turn 2: plan → direct
-        JSON.stringify({ type: 'direct', reasoning: 'Follow-up' }),
+        // Turn 2: direct response (no planning)
         'Second response, building on context',
       ],
     });
@@ -140,9 +156,7 @@ describe('Queen integration', () => {
 
     const provider = new MockProvider({
       responses: [
-        // TaskPlanner → direct
-        JSON.stringify({ type: 'direct', reasoning: 'Needs file access' }),
-        // First chat → tool call response
+        // First chat → tool call response (no planning step)
         'Let me read that file for you.',
         // Follow-up chat after tool results
         'The file contains: file contents here',
@@ -150,10 +164,8 @@ describe('Queen integration', () => {
       supportsTools: true,
     });
 
-    // Use toolCallsQueue: one entry per chat() call.
-    // Call 1 = TaskPlanner.plan(), Call 2 = direct request (tool call), Call 3 = follow-up.
+    // No planning step — tool calls queue maps directly to chat() calls.
     provider.toolCallsQueue = [
-      undefined, // plan call — no tools
       [{ id: 'tc-1', name: 'read_file', arguments: { path: '/tmp/test.txt' } }], // direct — trigger tool
       undefined, // follow-up — no tools
     ];
@@ -166,7 +178,7 @@ describe('Queen integration', () => {
 
     const result = await queen.processMessage('Read /tmp/test.txt');
 
-    // Non-streaming path now accumulates text across tool rounds (matching streaming behavior)
+    // Non-streaming path accumulates text across tool rounds
     expect(result).toBe('Let me read that file for you.The file contains: file contents here');
     expect(mcpServer.executeCalls).toHaveLength(1);
     expect(mcpServer.executeCalls[0].arguments).toEqual({ path: '/tmp/test.txt' });
