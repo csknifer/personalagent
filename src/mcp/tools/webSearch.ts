@@ -249,10 +249,11 @@ export async function fetchUrlTool(url: string): Promise<FetchResult> {
           };
         }
 
-        // Validate redirect target hostname against SSRF
+        // Validate redirect target hostname against SSRF (DNS resolve to catch rebinding)
         const redirectHostname = redirectUrl.hostname.replace(/^\[|\]$/g, '');
-        if (isPrivateHost(redirectHostname)) {
-          return { success: false, error: `Fetching internal/private network addresses is not allowed: "${redirectHostname}"` };
+        const redirectDnsCheck = await resolveAndCheckHost(redirectHostname);
+        if (redirectDnsCheck.isPrivate) {
+          return { success: false, error: `Redirect to internal/private network address is not allowed: "${redirectHostname}"${redirectDnsCheck.resolvedIP ? ` (resolves to ${redirectDnsCheck.resolvedIP})` : ''}` };
         }
 
         currentUrl = redirectUrl.href;

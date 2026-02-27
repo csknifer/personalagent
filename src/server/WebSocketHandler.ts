@@ -93,6 +93,10 @@ export class WebSocketHandler {
           }
           this.sendStateSnapshot();
           this.resolveReady();
+        }).catch((err) => {
+          console.warn('Failed to load history:', err instanceof Error ? err.message : err);
+          this.sendStateSnapshot();
+          this.resolveReady();
         });
       } else {
         // Another connection already owns history — start fresh

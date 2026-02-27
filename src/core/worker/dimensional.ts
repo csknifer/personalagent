@@ -30,6 +30,10 @@ export function parseSuccessCriteria(criteria: string): string[] {
   const semicolonSplit = criteria.split(';').map(s => s.trim()).filter(Boolean);
   if (semicolonSplit.length > 1) return semicolonSplit;
 
+  // Try plain newline separation
+  const newlineSplit = criteria.split('\n').map(s => s.trim()).filter(Boolean);
+  if (newlineSplit.length > 1) return newlineSplit;
+
   // Single criterion
   return [criteria.trim()];
 }
