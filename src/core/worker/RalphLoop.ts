@@ -451,8 +451,8 @@ export async function ralphLoop(
     // --- Confidence plateau: exit with success when quality stops improving ---
     context.previousScores = context.previousScores || [];
     context.previousScores.push(verification.confidence);
-    if (context.iteration >= 3 && !verification.complete && context.previousScores.length >= 3) {
-      const recent = context.previousScores.slice(-3);
+    if (context.iteration >= 2 && !verification.complete && context.previousScores.length >= 2) {
+      const recent = context.previousScores.slice(-2);
       const range = Math.max(...recent) - Math.min(...recent);
       const best = Math.max(...recent);
       if (range <= 0.05 && best >= 0.6) {

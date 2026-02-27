@@ -1456,17 +1456,15 @@ describe('ralphLoop confidence plateau exit', () => {
     getProgressTracker().reset();
   });
 
-  it('exits with success when confidence plateaus above 0.6 for 3 iterations', async () => {
-    // Simulate 3 iterations where confidence is stable around 0.7 but never marked complete
+  it('exits with success when confidence plateaus above 0.6 for 2 iterations', async () => {
+    // Simulate 2 iterations where confidence is stable around 0.7 but never marked complete
     provider.responses = [
       'Research attempt 1 with good findings',
       JSON.stringify({ complete: false, confidence: 0.68, feedback: 'Good but missing some details', nextAction: 'Search more' }),
       'Research attempt 2 with similar findings',
       JSON.stringify({ complete: false, confidence: 0.70, feedback: 'Still missing minor details', nextAction: 'Try another source' }),
-      'Research attempt 3 with same level of quality',
-      JSON.stringify({ complete: false, confidence: 0.72, feedback: 'Similar quality', nextAction: 'Find more sources' }),
       // These should never be reached:
-      'Attempt 4 should not happen',
+      'Attempt 3 should not happen',
       JSON.stringify({ complete: false, confidence: 0.72, feedback: 'Unreachable' }),
     ];
 
@@ -1477,7 +1475,7 @@ describe('ralphLoop confidence plateau exit', () => {
     });
 
     expect(result.success).toBe(true);
-    expect(result.iterations).toBe(3);
+    expect(result.iterations).toBe(2);
     // Should return best output, not last
     expect(result.bestScore).toBeGreaterThanOrEqual(0.68);
   });
@@ -1502,7 +1500,7 @@ describe('ralphLoop confidence plateau exit', () => {
     });
 
     // Should NOT exit via plateau (below 0.6), should exit via hopelessness or max iterations
-    expect(result.iterations).toBeGreaterThan(3);
+    expect(result.iterations).toBeGreaterThan(2);
   });
 
   it('does not plateau-exit when confidence is improving', async () => {
