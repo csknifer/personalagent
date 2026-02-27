@@ -174,6 +174,7 @@ export interface Verification {
   complete: boolean;
   feedback?: string;
   confidence: number;
+  tokenUsage?: TokenUsage;
 }
 
 export interface Verifier {

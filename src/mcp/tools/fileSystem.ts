@@ -3,7 +3,7 @@
  */
 
 import { readFile, writeFile, readdir, stat, mkdir, unlink } from 'fs/promises';
-import { existsSync } from 'fs';
+import { existsSync, realpathSync } from 'fs';
 import { join, resolve, dirname, sep } from 'path';
 
 export interface SandboxConfig {
@@ -17,10 +17,35 @@ export interface SandboxConfig {
  */
 export function validatePath(inputPath: string, allowedRoots: string[]): string {
   const resolved = resolve(inputPath);
+
+  // If the path exists, resolve symlinks to prevent sandbox escapes.
+  // For non-existent paths (e.g. write targets), validate the parent directory.
+  let realPath: string;
+  try {
+    realPath = realpathSync(resolved);
+  } catch {
+    // Path doesn't exist yet — validate the nearest existing ancestor
+    const parent = dirname(resolved);
+    try {
+      realPath = realpathSync(parent);
+      // Re-append the final segment so the full path is checked
+      realPath = join(realPath, resolved.slice(parent.length));
+    } catch {
+      // Parent also doesn't exist — use resolved path as-is
+      realPath = resolved;
+    }
+  }
+
   const isAllowed = allowedRoots.some(root => {
     const resolvedRoot = resolve(root);
-    const rootWithSep = resolvedRoot.endsWith(sep) ? resolvedRoot : resolvedRoot + sep;
-    return resolved === resolvedRoot || resolved.startsWith(rootWithSep);
+    let realRoot: string;
+    try {
+      realRoot = realpathSync(resolvedRoot);
+    } catch {
+      realRoot = resolvedRoot;
+    }
+    const rootWithSep = realRoot.endsWith(sep) ? realRoot : realRoot + sep;
+    return realPath === realRoot || realPath.startsWith(rootWithSep);
   });
 
   if (!isAllowed) {

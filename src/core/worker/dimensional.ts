@@ -5,7 +5,7 @@
  * strategic guidance for multi-criteria tasks.
  */
 
-import type { Task, TaskResult, Verification, Verifier, CriterionScore, DimensionalVerification, ConvergenceSignal, ConvergenceState } from '../types.js';
+import type { Task, TaskResult, Verification, Verifier, CriterionScore, DimensionalVerification, ConvergenceSignal, ConvergenceState, TokenUsage } from '../types.js';
 import type { LLMProvider } from '../../providers/index.js';
 import { getDebugLogger } from '../DebugLogger.js';
 
@@ -60,21 +60,45 @@ export function maskObservations(
   );
 
   // Truncate large inline JSON objects (200+ chars)
-  masked = masked.replace(
-    /\{[\s\S]{200,}?\}/g,
-    (match) => {
-      if (match.length <= maxOutputLength) return match;
-      // Skip truncation if this block contains a retained ID
-      if (retainedIds && retainedIds.size > 0) {
-        for (const id of retainedIds) {
-          if (match.includes(id)) return match;
-        }
+  // Uses brace-matching instead of regex to avoid catastrophic backtracking
+  // on unbalanced braces in worker output.
+  let result = '';
+  let i = 0;
+  while (i < masked.length) {
+    if (masked[i] === '{') {
+      let depth = 1;
+      let j = i + 1;
+      while (j < masked.length && depth > 0) {
+        if (masked[j] === '{') depth++;
+        else if (masked[j] === '}') depth--;
+        j++;
       }
-      return match.slice(0, maxOutputLength) + '... [truncated]}';
+      if (depth === 0) {
+        const block = masked.slice(i, j);
+        if (block.length > 200 && block.length > maxOutputLength) {
+          let shouldRetain = false;
+          if (retainedIds && retainedIds.size > 0) {
+            for (const id of retainedIds) {
+              if (block.includes(id)) { shouldRetain = true; break; }
+            }
+          }
+          result += shouldRetain ? block : block.slice(0, maxOutputLength) + '... [truncated]}';
+        } else {
+          result += block;
+        }
+        i = j;
+      } else {
+        // Unbalanced brace — just pass through the character
+        result += masked[i];
+        i++;
+      }
+    } else {
+      result += masked[i];
+      i++;
     }
-  );
+  }
 
-  return masked;
+  return result;
 }
 
 /**
@@ -398,7 +422,7 @@ export async function generateReflexion(
   task: Task,
   attempt: string,
   feedback: string
-): Promise<string> {
+): Promise<{ guidance: string; tokenUsage?: TokenUsage }> {
   const prompt = `Reflect on this failed attempt and produce strategic guidance for the next try. Do NOT re-solve the task.
 
 ## Task
@@ -422,9 +446,12 @@ In 2-4 sentences, provide:
 Be specific and actionable. "Try harder" is not useful. "Use fetch_url on the top search result to get detailed pricing data" is.`;
 
   try {
-    return await provider.complete(prompt);
+    const response = await provider.chat(
+      [{ role: 'user', content: prompt, timestamp: new Date() }],
+    );
+    return { guidance: response.content, tokenUsage: response.tokenUsage };
   } catch {
-    return feedback; // Fall back to raw feedback if reflection fails
+    return { guidance: feedback }; // Fall back to raw feedback if reflection fails
   }
 }
 
@@ -438,7 +465,7 @@ export async function generateDimensionalReflexion(
   attempt: string,
   dimensions: CriterionScore[],
   convergenceState?: ConvergenceState,
-): Promise<string> {
+): Promise<{ guidance: string; tokenUsage?: TokenUsage }> {
   const failingCriteria = dimensions
     .filter(d => !d.passed)
     .map(d => `- ${d.name} (score: ${d.score.toFixed(2)}): ${d.feedback}`)
@@ -469,9 +496,12 @@ In 3-5 sentences, provide strategic guidance:
 Be specific and actionable. Reference specific tools or strategies.`;
 
   try {
-    return await provider.complete(prompt);
+    const response = await provider.chat(
+      [{ role: 'user', content: prompt, timestamp: new Date() }],
+    );
+    return { guidance: response.content, tokenUsage: response.tokenUsage };
   } catch {
     // Fall back to a simple summary of failing criteria
-    return failingCriteria;
+    return { guidance: failingCriteria };
   }
 }

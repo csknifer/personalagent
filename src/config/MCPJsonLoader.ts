@@ -41,8 +41,8 @@ export class MCPJsonLoader {
       const raw = JSON.parse(await readFile(path, 'utf-8'));
       const parsed = MCPJsonFileSchema.parse(raw);
       return this.toExternalServers(parsed);
-    } catch {
-      // Malformed JSON or validation error — skip silently
+    } catch (err) {
+      console.warn(`\x1b[33m⚠ Could not load MCP config (${path}): ${err instanceof Error ? err.message : err}\x1b[0m`);
       return [];
     }
   }

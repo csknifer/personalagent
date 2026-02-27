@@ -420,6 +420,13 @@ export async function ralphLoop(
     context.llmCalls++; // Count verification call
     const verification = await activeVerifier.check(attempt);
 
+    // Accumulate verification token usage into per-task totals
+    if (verification.tokenUsage) {
+      totalTokens.input += verification.tokenUsage.input;
+      totalTokens.output += verification.tokenUsage.output;
+      totalTokens.total += verification.tokenUsage.total;
+    }
+
     log.info('RalphLoop', `Verification result (iter ${context.iteration}/${maxIterations})`, {
       complete: verification.complete,
       confidence: verification.confidence,
@@ -521,21 +528,32 @@ export async function ralphLoop(
         }
       } else if (useReflexion) {
         context.llmCalls++;
+        let reflexionTokens: TokenUsage | undefined;
         if (useDCL && dimVerification.dimensions) {
-          context.reflexionGuidance = await generateDimensionalReflexion(
+          const reflexion = await generateDimensionalReflexion(
             verificationProvider,
             task,
             attempt.output,
             dimVerification.dimensions,
             context.convergenceState,
           );
+          context.reflexionGuidance = reflexion.guidance;
+          reflexionTokens = reflexion.tokenUsage;
         } else {
-          context.reflexionGuidance = await generateReflexion(
+          const reflexion = await generateReflexion(
             verificationProvider,
             task,
             attempt.output,
             verification.feedback || '',
           );
+          context.reflexionGuidance = reflexion.guidance;
+          reflexionTokens = reflexion.tokenUsage;
+        }
+        // Accumulate reflexion token usage
+        if (reflexionTokens) {
+          totalTokens.input += reflexionTokens.input;
+          totalTokens.output += reflexionTokens.output;
+          totalTokens.total += reflexionTokens.total;
         }
       }
     }

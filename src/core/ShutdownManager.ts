@@ -26,6 +26,13 @@ export class ShutdownManager {
   }
 
   /**
+   * Remove all cleanup entries with the given name.
+   */
+  unregister(name: string): void {
+    this.cleanups = this.cleanups.filter(entry => entry.name !== name);
+  }
+
+  /**
    * Attach SIGINT/SIGTERM handlers.
    * Second signal forces immediate exit.
    */

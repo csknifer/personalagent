@@ -131,9 +131,9 @@ export class OpenAIProvider extends LLMProvider {
       content,
       toolCalls: toolCalls && toolCalls.length > 0 ? toolCalls : undefined,
       tokenUsage: response.usage ? {
-        input: response.usage.prompt_tokens,
-        output: response.usage.completion_tokens,
-        total: response.usage.total_tokens,
+        input: response.usage.prompt_tokens || 0,
+        output: response.usage.completion_tokens || 0,
+        total: response.usage.total_tokens || 0,
       } : undefined,
       finishReason: choice?.finish_reason === 'tool_calls' ? 'tool_calls' : 
                     choice?.finish_reason === 'length' ? 'length' : 'stop',
@@ -151,11 +151,13 @@ export class OpenAIProvider extends LLMProvider {
       stream: true,
     });
 
-    let currentToolCall: { id: string; name: string; arguments: string } | null = null;
+    // Track multiple concurrent tool calls by index (OpenAI streams parallel
+    // tool calls with interleaved argument deltas distinguished by tc.index).
+    const activeToolCalls = new Map<number, { id: string; name: string; arguments: string }>();
 
     for await (const chunk of stream) {
       const delta = chunk.choices[0]?.delta;
-      
+
       if (delta?.content) {
         yield { type: 'text', content: delta.content };
       }
@@ -163,38 +165,33 @@ export class OpenAIProvider extends LLMProvider {
       // Handle streaming tool calls
       if (delta?.tool_calls) {
         for (const tc of delta.tool_calls) {
+          const index = tc.index ?? 0;
           if (tc.id) {
-            // New tool call starting
-            if (currentToolCall) {
-              yield {
-                type: 'tool_call',
-                toolCall: {
-                  id: currentToolCall.id,
-                  name: currentToolCall.name,
-                  arguments: safeParseToolArgs(currentToolCall.arguments),
-                },
-              };
-            }
-            currentToolCall = {
+            // New tool call starting at this index
+            activeToolCalls.set(index, {
               id: tc.id,
               name: tc.function?.name || '',
               arguments: tc.function?.arguments || '',
-            };
-          } else if (currentToolCall && tc.function?.arguments) {
-            currentToolCall.arguments += tc.function.arguments;
+            });
+          } else if (tc.function?.arguments) {
+            const existing = activeToolCalls.get(index);
+            if (existing) {
+              existing.arguments += tc.function.arguments;
+            }
           }
         }
       }
     }
 
-    // Emit final tool call if any
-    if (currentToolCall) {
+    // Emit all accumulated tool calls in index order
+    const sortedEntries = [...activeToolCalls.entries()].sort((a, b) => a[0] - b[0]);
+    for (const [, toolCall] of sortedEntries) {
       yield {
         type: 'tool_call',
         toolCall: {
-          id: currentToolCall.id,
-          name: currentToolCall.name,
-          arguments: safeParseToolArgs(currentToolCall.arguments),
+          id: toolCall.id,
+          name: toolCall.name,
+          arguments: safeParseToolArgs(toolCall.arguments),
         },
       };
     }

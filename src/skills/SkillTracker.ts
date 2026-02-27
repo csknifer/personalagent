@@ -119,6 +119,18 @@ export class SkillTracker {
   }
 
   /**
+   * Flush any pending debounced save immediately.
+   * Call during shutdown to avoid losing recent tracking data.
+   */
+  async flush(): Promise<void> {
+    if (this.saveDebounceTimer) {
+      clearTimeout(this.saveDebounceTimer);
+      this.saveDebounceTimer = null;
+    }
+    await this.save();
+  }
+
+  /**
    * Record a skill invocation
    */
   recordInvocation(
@@ -282,6 +294,7 @@ export class SkillTracker {
    */
   async clearAll(): Promise<void> {
     this.data = createDefaultData();
+    this.isDirty = true;
     await this.save();
   }
 

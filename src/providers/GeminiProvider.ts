@@ -74,8 +74,9 @@ export function convertMessagesToGemini(messages: Message[]): Array<{ role: stri
  * Extract the system instruction from messages (first system message content).
  */
 export function getGeminiSystemInstruction(messages: Message[]): string | undefined {
-  const systemMsg = messages.find(m => m.role === 'system');
-  return systemMsg?.content;
+  const systemMsgs = messages.filter(m => m.role === 'system');
+  if (systemMsgs.length === 0) return undefined;
+  return systemMsgs.map(m => m.content).join('\n\n');
 }
 
 /**
@@ -212,7 +213,9 @@ export class GeminiProvider extends LLMProvider {
         output: usage.candidatesTokenCount || 0,
         total: usage.totalTokenCount || 0,
       } : undefined,
-      finishReason: toolCalls.length > 0 ? 'tool_calls' : 'stop',
+      finishReason: toolCalls.length > 0 ? 'tool_calls'
+        : response.candidates?.[0]?.finishReason === 'MAX_TOKENS' ? 'length'
+        : 'stop',
     };
   }
 

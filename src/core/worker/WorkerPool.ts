@@ -89,15 +89,24 @@ export class WorkerPool {
     const completed = new Set<string>();
     const pending = [...tasks];
 
+    // Strip references to non-existent dependency IDs to prevent deadlocks
+    const taskIds = new Set(tasks.map(t => t.id));
+    for (const task of pending) {
+      const invalid = task.dependencies.filter(dep => !taskIds.has(dep));
+      if (invalid.length > 0) {
+        task.dependencies = task.dependencies.filter(dep => taskIds.has(dep));
+      }
+    }
+
     while (pending.length > 0) {
       // Find tasks that are ready (dependencies satisfied)
-      const ready = pending.filter(task => 
+      const ready = pending.filter(task =>
         task.dependencies.every(dep => completed.has(dep))
       );
 
       if (ready.length === 0 && pending.length > 0) {
-        // Circular dependency or missing dependency
-        throw new Error('Cannot resolve task dependencies');
+        // Circular dependency detected
+        throw new Error('Cannot resolve task dependencies — circular dependency detected');
       }
 
       // Inject dependency results into ready tasks — prefer structured findings

@@ -131,7 +131,8 @@ describe('Queen', () => {
       const { queen } = createTestQueen({ provider, mcpServer });
       const result = await queen.processMessage('Search for cats');
 
-      expect(result).toBe('Based on the search results, here is your answer.');
+      // Non-streaming path now accumulates text across tool rounds (matching streaming behavior)
+      expect(result).toBe('Let me search for that...Based on the search results, here is your answer.');
       expect(mcpServer.executeCalls).toHaveLength(1);
       expect(mcpServer.executeCalls[0].name).toBe('web_search');
     });
@@ -216,19 +217,27 @@ describe('Queen', () => {
   });
 
   describe('processMessage() — error handling', () => {
-    it('should throw and emit error event when provider fails on direct path', async () => {
+    it('should return error content and emit error event when provider fails on direct path', async () => {
       // Provider that always throws — TaskPlanner.plan() will catch the error
       // and default to 'direct', then handleDirectRequest() will also throw.
+      // processMessage catches the error and returns an error message instead of throwing.
       const provider = new MockProvider();
       provider.errorToThrow = new Error('Provider is down');
 
       const events: AgentEvent[] = [];
       const { queen } = createTestQueen({ provider, events });
 
-      await expect(queen.processMessage('test')).rejects.toThrow('Provider is down');
+      const result = await queen.processMessage('test');
+      expect(result).toContain('Provider is down');
 
       const errorEvents = events.filter(e => e.type === 'error');
       expect(errorEvents.length).toBeGreaterThan(0);
+
+      // Phase should be reset to idle (bug #2 fix)
+      const phaseEvents = events.filter(e => e.type === 'phase_change');
+      const lastPhase = phaseEvents[phaseEvents.length - 1];
+      expect(lastPhase).toBeDefined();
+      expect((lastPhase as { phase: string }).phase).toBe('idle');
     });
   });
 

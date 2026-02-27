@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 
-import 'dotenv/config';
+import { config as dotenvConfig } from 'dotenv';
+// dotenv v17 no longer populates process.env automatically — assign explicitly
+const dotenvResult = dotenvConfig();
+if (dotenvResult.parsed) Object.assign(process.env, dotenvResult.parsed);
 import { render } from 'ink';
 import { Command } from 'commander';
 import { App } from './cli/App.js';

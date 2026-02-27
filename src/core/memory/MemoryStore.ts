@@ -39,7 +39,9 @@ function serializeNote(note: MemoryNote): string {
 }
 
 function parseNote(raw: string): MemoryNote {
-  const fmMatch = raw.match(/^---\n([\s\S]*?)\n---\n\n?([\s\S]*)$/);
+  // Normalize CRLF to LF for cross-platform compatibility (Windows, git autocrlf)
+  const normalized = raw.replace(/\r\n/g, '\n');
+  const fmMatch = normalized.match(/^---\n([\s\S]*?)\n---\n\n?([\s\S]*)$/);
   if (!fmMatch) {
     throw new Error('Invalid note format: missing frontmatter');
   }

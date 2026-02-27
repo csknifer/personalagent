@@ -163,6 +163,16 @@ export class Memory {
   }
 
   /**
+   * Truncate messages back to a specific count.
+   * Removes all messages after the given count, recalculating token totals.
+   */
+  truncateTo(count: number): void {
+    if (count >= this.messages.length) return;
+    this.messages.length = count;
+    this.recalculateTokenCount();
+  }
+
+  /**
    * Export memory state for persistence
    */
   export(): {
@@ -194,6 +204,7 @@ export class Memory {
       userPreferences: new Map(Object.entries(data.context.userPreferences)),
     };
     this.recalculateTokenCount();
+    this.trimIfNeeded();
   }
 
   /**
@@ -217,6 +228,8 @@ export class Memory {
       while (this.totalTokensUsed > this.maxTokens && this.messages.length > startIdx + 1) {
         if (!this.removeOldestLogicalUnit(startIdx)) break;
       }
+      // Recalculate to correct any drift from messages missing tokenCount metadata
+      this.recalculateTokenCount();
     }
   }
 

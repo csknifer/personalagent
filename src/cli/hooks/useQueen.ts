@@ -70,7 +70,7 @@ export function useQueen({
   const queenRef = useRef<Queen | null>(null);
   
   useEffect(() => {
-    queenRef.current = new Queen({
+    const queen = new Queen({
       provider: queenProvider,
       workerProvider,
       mcpServer,
@@ -80,23 +80,22 @@ export function useQueen({
       memoryStore,
       onEvent: handleAgentEvent,
     });
+    queenRef.current = queen;
 
     // Register Queen cleanup with ShutdownManager
-    getShutdownManager().register('queen', () => queenRef.current?.shutdown(), 5);
+    getShutdownManager().register('queen', () => queen.shutdown(), 5);
 
     // Attach history manager and load persisted history
-    if (historyManager && queenRef.current) {
-      historyManager.attach(queenRef.current.getMemory());
+    if (historyManager) {
+      historyManager.attach(queen.getMemory());
       historyManager.load().then((loaded) => {
         if (loaded) {
           // Sync loaded messages into React state
-          const memory = queenRef.current?.getMemory();
-          if (memory) {
-            const restored = memory.getMessages().filter(m => m.role !== 'system');
-            if (restored.length > 0) {
-              setMessages(restored);
-              return; // Skip system-prompt-only init below
-            }
+          const memory = queen.getMemory();
+          const restored = memory.getMessages().filter(m => m.role !== 'system');
+          if (restored.length > 0) {
+            setMessages(restored);
+            return; // Skip system-prompt-only init below
           }
         }
         // Default: initialize with system message if present
@@ -120,6 +119,12 @@ export function useQueen({
         }]);
       }
     }
+
+    // Cleanup: shut down old Queen and unregister from ShutdownManager
+    return () => {
+      queen.shutdown();
+      getShutdownManager().unregister('queen');
+    };
   }, [queenProvider, workerProvider, mcpServer, config, skillLoader, historyManager]);
 
   // --- Throttled event handling ---
@@ -211,7 +216,7 @@ export function useQueen({
         setWorkers(prev =>
           prev.map(w =>
             w.id === event.workerId
-              ? { ...w, status: 'completed' as const }
+              ? { ...w, status: event.result?.success === false ? 'failed' as const : 'completed' as const }
               : w
           )
         );

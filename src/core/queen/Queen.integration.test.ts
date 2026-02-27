@@ -166,7 +166,8 @@ describe('Queen integration', () => {
 
     const result = await queen.processMessage('Read /tmp/test.txt');
 
-    expect(result).toBe('The file contains: file contents here');
+    // Non-streaming path now accumulates text across tool rounds (matching streaming behavior)
+    expect(result).toBe('Let me read that file for you.The file contains: file contents here');
     expect(mcpServer.executeCalls).toHaveLength(1);
     expect(mcpServer.executeCalls[0].arguments).toEqual({ path: '/tmp/test.txt' });
   });

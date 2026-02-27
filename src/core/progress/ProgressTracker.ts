@@ -50,6 +50,7 @@ export class ProgressTracker {
   private eventListeners: Set<AgentEventHandler> = new Set();
   private activeLLMCalls: Map<string, LLMCallEvent> = new Map();
   private activeToolCalls: Map<string, ToolExecutionEvent> = new Map();
+  private toolCallCounter: number = 0;
 
   constructor() {
     this.state = {
@@ -206,11 +207,13 @@ export class ProgressTracker {
    * Handle tool execution events
    */
   private handleToolExecutionEvent(event: ToolExecutionEvent): void {
-    const key = `${event.workerId || 'main'}-${event.toolName}`;
-    
+    // Use a monotonic counter in keys to avoid collisions when the same tool
+    // is called concurrently by the same worker.
+    const prefix = `${event.workerId || 'main'}-${event.toolName}`;
+
     if (event.status === 'started') {
-      this.activeToolCalls.set(key, event);
-      
+      this.activeToolCalls.set(`${prefix}-${this.toolCallCounter++}`, event);
+
       // Update worker current action
       if (event.workerId) {
         this.updateWorker(event.workerId, {
@@ -218,8 +221,14 @@ export class ProgressTracker {
         });
       }
     } else {
-      this.activeToolCalls.delete(key);
-      
+      // Remove the first matching entry for this worker+tool
+      for (const [key] of this.activeToolCalls) {
+        if (key.startsWith(prefix)) {
+          this.activeToolCalls.delete(key);
+          break;
+        }
+      }
+
       // Update worker tool call count
       if (event.workerId && event.status === 'completed') {
         const worker = this.state.workers.get(event.workerId);
@@ -271,7 +280,21 @@ export class ProgressTracker {
    * Get current progress state
    */
   getCurrentProgress(): ProgressState {
-    return { ...this.state };
+    // Deep clone to prevent consumers from mutating internal state
+    const clonedWorkers = new Map<string, WorkerProgress>();
+    for (const [id, worker] of this.state.workers) {
+      clonedWorkers.set(id, { ...worker });
+    }
+    return {
+      ...this.state,
+      workers: clonedWorkers,
+      llmCalls: {
+        ...this.state.llmCalls,
+        byPurpose: { ...this.state.llmCalls.byPurpose },
+        byProvider: { ...this.state.llmCalls.byProvider },
+        totalTokens: { ...this.state.llmCalls.totalTokens },
+      },
+    };
   }
 
   /**

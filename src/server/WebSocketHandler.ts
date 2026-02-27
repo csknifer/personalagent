@@ -101,7 +101,9 @@ export class WebSocketHandler {
     this.ws.on('message', (data) => {
       try {
         const msg = JSON.parse(data.toString()) as ClientMessage;
-        this.handleClientMessage(msg);
+        this.handleClientMessage(msg).catch(err => {
+          this.send({ type: 'error', error: formatErrorMessage(err) });
+        });
       } catch (err) {
         this.send({ type: 'error', error: 'Invalid message format' });
       }
@@ -598,6 +600,10 @@ export class WebSocketHandler {
     if (this.flushTimer) {
       clearTimeout(this.flushTimer);
       this.flushTimer = null;
+    }
+    // Detach history so a new connection can re-attach its own Memory
+    if (this.ownsHistory && this.bootstrap.historyManager) {
+      this.bootstrap.historyManager.detach().catch(() => {});
     }
     // Stop in-flight workers to prevent resource leaks after disconnect
     this.queen.shutdown();

@@ -147,7 +147,7 @@ export async function bootstrap(options: BootstrapOptions = {}): Promise<Bootstr
 
   shutdownManager.register('history', () => historyManager.save(), 10);
   if (skillTracker) {
-    shutdownManager.register('skillTracker', () => skillTracker!.save(), 10);
+    shutdownManager.register('skillTracker', () => skillTracker!.flush(), 10);
   }
   if (strategyStore) {
     shutdownManager.register('strategyStore', () => strategyStore!.save(), 10);

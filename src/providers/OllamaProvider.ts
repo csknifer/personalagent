@@ -72,7 +72,7 @@ export class OllamaProvider extends LLMProvider {
       options: {
         temperature: options?.temperature ?? this.defaultTemperature,
       },
-      tools: this.convertTools(options?.tools) as undefined,
+      tools: this.convertTools(options?.tools) as any,
     });
 
     const content = response.message.content || '';
@@ -103,7 +103,7 @@ export class OllamaProvider extends LLMProvider {
       options: {
         temperature: options?.temperature ?? this.defaultTemperature,
       },
-      tools: this.convertTools(options?.tools) as undefined,
+      tools: this.convertTools(options?.tools) as any,
       stream: true,
     });
 

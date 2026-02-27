@@ -40,6 +40,16 @@ export class HistoryManager {
   }
 
   /**
+   * Detach the current memory instance (saves if dirty).
+   * Allows a new connection to attach its own Memory.
+   */
+  async detach(): Promise<void> {
+    if (!this.memory) return;
+    await this.save();
+    this.memory = null;
+  }
+
+  /**
    * Load history from disk into the attached memory.
    * Returns true if history was loaded, false if starting fresh.
    */

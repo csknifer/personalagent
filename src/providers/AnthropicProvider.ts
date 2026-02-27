@@ -19,12 +19,12 @@ interface AnthropicConfig {
  * Extracts system message separately, maps tool_use / tool_result content blocks.
  */
 export function convertMessagesToAnthropic(messages: Message[]): { system?: string; messages: Anthropic.MessageParam[] } {
-  let system: string | undefined;
+  const systemParts: string[] = [];
   const anthropicMessages: Anthropic.MessageParam[] = [];
 
   for (const msg of messages) {
     if (msg.role === 'system') {
-      system = msg.content;
+      systemParts.push(msg.content);
       continue;
     }
 
@@ -57,6 +57,7 @@ export function convertMessagesToAnthropic(messages: Message[]): { system?: stri
     }
   }
 
+  const system = systemParts.length > 0 ? systemParts.join('\n\n') : undefined;
   return { system, messages: anthropicMessages };
 }
 

@@ -66,8 +66,15 @@ export class TrackedProvider extends LLMProvider {
     });
 
     try {
-      const response = await this.provider.chat(messages, options);
-      
+      // Strip tracking-specific fields before passing to underlying provider
+      const baseOptions: ChatOptions | undefined = options ? {
+        temperature: options.temperature,
+        maxTokens: options.maxTokens,
+        stopSequences: options.stopSequences,
+        tools: options.tools,
+      } : undefined;
+      const response = await this.provider.chat(messages, baseOptions);
+
       this.logger.endCall(callId, {
         success: true,
         tokens: response.tokenUsage,
@@ -98,9 +105,16 @@ export class TrackedProvider extends LLMProvider {
     });
 
     try {
+      // Strip tracking-specific fields before passing to underlying provider
+      const baseOptions: ChatOptions | undefined = options ? {
+        temperature: options.temperature,
+        maxTokens: options.maxTokens,
+        stopSequences: options.stopSequences,
+        tools: options.tools,
+      } : undefined;
       let totalContent = '';
 
-      for await (const chunk of this.provider.chatStream(messages, options)) {
+      for await (const chunk of this.provider.chatStream(messages, baseOptions)) {
         if (chunk.content) {
           totalContent += chunk.content;
         }
@@ -109,8 +123,22 @@ export class TrackedProvider extends LLMProvider {
 
       // Streaming APIs don't return token counts, so estimate them.
       // ~4 chars per token heuristic (same as estimateTokenCount in utils).
-      const inputText = messages.map(m => m.content).join(' ');
-      const estimatedInput = Math.ceil(inputText.length / 4);
+      // Include tool call/result metadata in the estimate, not just message content.
+      let inputChars = 0;
+      for (const m of messages) {
+        inputChars += m.content.length;
+        if (m.toolCalls) {
+          for (const tc of m.toolCalls) {
+            inputChars += tc.name.length + JSON.stringify(tc.arguments).length;
+          }
+        }
+        if (m.toolResults) {
+          for (const tr of m.toolResults) {
+            inputChars += tr.result.length;
+          }
+        }
+      }
+      const estimatedInput = Math.ceil(inputChars / 4);
       const estimatedOutput = Math.ceil(totalContent.length / 4);
       this.logger.endCall(callId, {
         success: true,

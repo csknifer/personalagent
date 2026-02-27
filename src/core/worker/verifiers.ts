@@ -170,9 +170,12 @@ Rules:
     log.debug('UnifiedVerifier', 'Checking result', { resultLength: result.output.length });
 
     try {
-      const response = await this.provider.complete(prompt);
-      log.debug('UnifiedVerifier', 'Raw response', { response: response.slice(0, 300) });
-      const parsed = this.parseUnifiedVerification(response);
+      const llmResponse = await this.provider.chat(
+        [{ role: 'user', content: prompt, timestamp: new Date() }],
+      );
+      log.debug('UnifiedVerifier', 'Raw response', { response: llmResponse.content.slice(0, 300) });
+      const parsed = this.parseUnifiedVerification(llmResponse.content);
+      parsed.tokenUsage = llmResponse.tokenUsage;
       log.info('UnifiedVerifier', `Verdict: ${parsed.complete ? 'PASS' : 'FAIL'}`, {
         complete: parsed.complete,
         confidence: parsed.confidence,
@@ -241,9 +244,13 @@ Respond with JSON:
     log.debug('UnifiedVerifier', 'Checking result (dimensional)', { resultLength: result.output.length, criteria: criteria.length });
 
     try {
-      const response = await this.provider.complete(prompt);
-      log.debug('UnifiedVerifier', 'Raw dimensional response', { response: response.slice(0, 300) });
-      return this.parseDimensionalVerification(response, criteria);
+      const llmResponse = await this.provider.chat(
+        [{ role: 'user', content: prompt, timestamp: new Date() }],
+      );
+      log.debug('UnifiedVerifier', 'Raw dimensional response', { response: llmResponse.content.slice(0, 300) });
+      const parsed = this.parseDimensionalVerification(llmResponse.content, criteria);
+      parsed.tokenUsage = llmResponse.tokenUsage;
+      return parsed;
     } catch (err) {
       log.error('UnifiedVerifier', 'Dimensional verification failed', { error: String(err) });
       return {

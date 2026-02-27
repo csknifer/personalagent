@@ -685,7 +685,7 @@ describe('generateReflexion', () => {
     const task = createTask({ successCriteria: 'Handles all edge cases' });
     const result = await generateReflexion(provider, task, 'First attempt output', 'Missing edge case handling');
 
-    expect(result).toContain('error handling');
+    expect(result.guidance).toContain('error handling');
     expect(provider.chatCalls.length).toBe(1);
   });
 
@@ -695,7 +695,7 @@ describe('generateReflexion', () => {
     const task = createTask();
     const result = await generateReflexion(provider, task, 'attempt', 'some feedback');
 
-    expect(result).toBe('some feedback');
+    expect(result.guidance).toBe('some feedback');
   });
 });
 
@@ -1162,7 +1162,7 @@ describe('generateDimensionalReflexion', () => {
 
     const result = await generateDimensionalReflexion(provider, task, 'attempt output', dimensions);
 
-    expect(result).toContain('accuracy');
+    expect(result.guidance).toContain('accuracy');
     expect(provider.chatCalls.length).toBe(1);
   });
 
@@ -1176,8 +1176,8 @@ describe('generateDimensionalReflexion', () => {
 
     const result = await generateDimensionalReflexion(provider, task, 'attempt', dimensions);
 
-    expect(result).toContain('Criterion A');
-    expect(result).toContain('0.30');
+    expect(result.guidance).toContain('Criterion A');
+    expect(result.guidance).toContain('0.30');
   });
 });
 

@@ -26,6 +26,10 @@ import { truncateToolResult, callWithTimeout } from '../worker/RalphLoop.js';
 
 const STREAM_TIMEOUT_MS = 60_000; // 60s per-chunk timeout for streaming
 
+// Skill context is truncated for planner prompts (saves tokens) but passed
+// in full to workers. 1500 chars captures most skill summaries while staying compact.
+const PLANNER_SKILL_CONTEXT_LIMIT = 1500;
+
 /**
  * Wraps an async iterable with a per-chunk timeout. If no chunk arrives
  * within `timeoutMs`, the iteration throws a timeout error.
@@ -36,21 +40,26 @@ async function* streamWithTimeout<T>(
   label: string,
 ): AsyncGenerator<T> {
   const iterator = source[Symbol.asyncIterator]();
-  while (true) {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const result = await Promise.race([
-      iterator.next(),
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(
-          () => reject(new Error(`${label} timed out — no response after ${Math.round(timeoutMs / 1000)}s`)),
-          timeoutMs,
-        );
-      }),
-    ]).finally(() => {
-      if (timer) clearTimeout(timer);
-    });
-    if (result.done) break;
-    yield result.value;
+  try {
+    while (true) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const result = await Promise.race([
+        iterator.next(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error(`${label} timed out — no response after ${Math.round(timeoutMs / 1000)}s`)),
+            timeoutMs,
+          );
+        }),
+      ]).finally(() => {
+        if (timer) clearTimeout(timer);
+      });
+      if (result.done) break;
+      yield result.value;
+    }
+  } finally {
+    // Clean up the underlying iterator (closes HTTP connections, etc.)
+    await iterator.return?.();
   }
 }
 
@@ -186,7 +195,7 @@ export class Queen {
       toolNames: tools?.map(t => t.name),
       toolDescriptions: tools?.map(t => t.description),
       skillContext: this.currentSkillContext
-        ? `Skill: ${this.currentSkillContext.name}\n${this.currentSkillContext.instructions.slice(0, 500)}`
+        ? `Skill: ${this.currentSkillContext.name}\n${this.currentSkillContext.instructions.slice(0, PLANNER_SKILL_CONTEXT_LIMIT)}`
         : undefined,
     };
 
@@ -216,44 +225,48 @@ export class Queen {
 
     let result: { content: string; tokenUsage?: TokenUsage };
 
-    if (plan.type === 'direct') {
-      // Emit executing phase for direct requests
-      this.emitPhaseChange('executing', 'Handling request directly...');
-      log.debug('Queen', 'Direct request path');
-      result = await this.handleDirectRequest(userMessage);
-    } else {
-      // Emit executing phase for decomposed requests
-      const taskSummary = plan.tasks?.map(t => t.description.slice(0, 60)).join(' | ') || '';
-      this.emitPhaseChange('executing', `Executing ${plan.tasks?.length || 0} tasks...`);
-      this.emitEvent({ type: 'thinking', content: `Tasks: ${taskSummary}` });
-      log.debug('Queen', 'Decomposed request path', { taskCount: plan.tasks?.length });
-      result = await this.handleDecomposedRequest(plan, userMessage);
-
-      // If workers returned empty content, fall back to direct handling
-      if (!result.content.trim()) {
-        this.emitEvent({ type: 'thinking', content: 'Worker returned empty, handling directly...' });
+    try {
+      if (plan.type === 'direct') {
+        // Emit executing phase for direct requests
+        this.emitPhaseChange('executing', 'Handling request directly...');
+        log.debug('Queen', 'Direct request path');
         result = await this.handleDirectRequest(userMessage);
       } else {
-        // Run evaluator-optimizer loop on decomposed results
-        const taskResultsMap = new Map<string, TaskResult>();
-        for (const task of this.currentTasks) {
-          if (task.result) taskResultsMap.set(task.id, task.result);
-        }
-        result = await this.runEvaluationLoop(result, userMessage, this.currentTasks, taskResultsMap);
+        // Emit executing phase for decomposed requests
+        const taskSummary = plan.tasks?.map(t => t.description.slice(0, 60)).join(' | ') || '';
+        this.emitPhaseChange('executing', `Executing ${plan.tasks?.length || 0} tasks...`);
+        this.emitEvent({ type: 'thinking', content: `Tasks: ${taskSummary}` });
+        log.debug('Queen', 'Decomposed request path', { taskCount: plan.tasks?.length });
+        result = await this.handleDecomposedRequest(plan, userMessage);
 
-        // Fire-and-forget: write task outcome to memory store
-        this.writeTaskMemory(userMessage, this.currentTasks, taskResultsMap).catch(() => {});
+        // If workers returned empty content, fall back to direct handling
+        if (!result.content.trim()) {
+          this.emitEvent({ type: 'thinking', content: 'Worker returned empty, handling directly...' });
+          result = await this.handleDirectRequest(userMessage);
+        } else {
+          // Run evaluator-optimizer loop on decomposed results
+          const taskResultsMap = new Map<string, TaskResult>();
+          for (const task of this.currentTasks) {
+            if (task.result) taskResultsMap.set(task.id, task.result);
+          }
+          result = await this.runEvaluationLoop(result, userMessage, this.currentTasks, taskResultsMap);
+
+          // Fire-and-forget: write task outcome to memory store
+          this.writeTaskMemory(userMessage, this.currentTasks, taskResultsMap).catch(() => {});
+        }
       }
+    } catch (error) {
+      // Ensure phase resets even on unrecoverable errors
+      const cleanMessage = formatErrorMessage(error);
+      this.emitEvent({ type: 'error', error: cleanMessage });
+      result = { content: `Error: ${cleanMessage}` };
+    } finally {
+      this.emitPhaseChange('idle', 'Request complete');
+      this.currentSkillContext = undefined;
     }
 
-    // Emit idle phase when complete
-    log.info('Queen', 'Request complete', { tokenUsage: result.tokenUsage, responseLength: result.content.length });
-    this.emitPhaseChange('idle', 'Request complete');
-
-    // Clear skill context after processing
-    this.currentSkillContext = undefined;
-
     // Add assistant response to memory with token count
+    log.info('Queen', 'Request complete', { tokenUsage: result.tokenUsage, responseLength: result.content.length });
     const assistantTokenCount = result.tokenUsage?.total ?? estimateTokenCount(result.content);
     this.memory.addMessage({
       role: 'assistant',
@@ -364,12 +377,9 @@ export class Queen {
     try {
       const loadedSkill = await this.skillLoader.loadSkill(matchedSkill.id);
       if (loadedSkill?.content) {
-        // Extract a condensed version of skill instructions (first ~2KB)
-        const condensedInstructions = this.condenseSkillContent(loadedSkill.content);
-        
         this.currentSkillContext = {
           name: loadedSkill.metadata.name,
-          instructions: condensedInstructions,
+          instructions: loadedSkill.content,
           resources: loadedSkill.resources,
         };
 
@@ -382,13 +392,6 @@ export class Queen {
       // Continue without skill context if loading fails
       this.currentSkillContext = undefined;
     }
-  }
-
-  /**
-   * Return skill content as-is — no truncation.
-   */
-  private condenseSkillContent(content: string): string {
-    return content;
   }
 
   /**
@@ -439,7 +442,7 @@ export class Queen {
         'LLM call',
       );
 
-      finalOutput = response.content;
+      finalOutput += response.content;
 
       // Accumulate token usage
       if (response.tokenUsage) {
@@ -752,8 +755,12 @@ export class Queen {
       const resultsMap = await this.workerPool.executeTasks(plan.tasks);
 
       // Merge results
+      // Merge results — callback may have already written some during mid-flight replanning.
+      // Only fill in results that the callback hasn't already captured.
       for (const [id, result] of resultsMap) {
-        allResults.set(id, result);
+        if (!allResults.has(id)) {
+          allResults.set(id, result);
+        }
       }
 
       // Update task statuses and emit completion events
@@ -819,7 +826,7 @@ export class Queen {
           toolNames: tools?.map(t => t.name),
           toolDescriptions: tools?.map(t => t.description),
           skillContext: this.currentSkillContext
-            ? `Skill: ${this.currentSkillContext.name}\n${this.currentSkillContext.instructions.slice(0, 500)}`
+            ? `Skill: ${this.currentSkillContext.name}\n${this.currentSkillContext.instructions.slice(0, PLANNER_SKILL_CONTEXT_LIMIT)}`
             : undefined,
         });
 
@@ -926,8 +933,10 @@ export class Queen {
     }
 
     // Filter successful vs failed results
-    const successful = taskResults.filter(({ result }) => result.success && result.output.trim());
-    const failed = taskResults.filter(({ result }) => !result.success || !result.output.trim());
+    // A task is successful if it reported success, even if it produced no prose output
+    // (e.g., tool-only tasks like file writes). Use findings as fallback content.
+    const successful = taskResults.filter(({ result }) => result.success);
+    const failed = taskResults.filter(({ result }) => !result.success);
 
     if (successful.length === 0) {
       // Surface partial work and structured errors instead of a generic message
@@ -950,7 +959,12 @@ export class Queen {
     }
 
     if (successful.length === 1 && failed.length === 0) {
-      return { content: successful[0].result.output, tokenUsage: workerTokens };
+      // Use output, or synthesize from findings if output is empty (tool-only tasks)
+      const output = successful[0].result.output.trim()
+        || (successful[0].result.findings?.length
+          ? successful[0].result.findings.map(f => `- ${f}`).join('\n')
+          : 'Task completed successfully.');
+      return { content: output, tokenUsage: workerTokens };
     }
 
     // Conditional aggregation: skip LLM synthesis for disjoint topics
@@ -983,7 +997,7 @@ export class Queen {
         if (result.findings && result.findings.length > 0) {
           section += `**Key Findings:**\n${result.findings.map(f => `- ${f}`).join('\n')}\n\n`;
         }
-        section += result.output;
+        section += result.output || '(Completed via tool calls)';
         return section;
       })
       .join('\n\n');
@@ -1057,6 +1071,8 @@ ${taskResultsSection}${failedSection}
 
     this.emitEvent({ type: 'thinking', content: 'Analyzing request...' });
 
+    // Snapshot message count so we can roll back streaming tool messages on fallback
+    const messageCountAfterUser = this.memory.getMessageCount();
     let fullResponse = '';
 
     try {
@@ -1079,7 +1095,7 @@ ${taskResultsSection}${failedSection}
         toolNames: tools?.map(t => t.name),
         toolDescriptions: tools?.map(t => t.description),
         skillContext: this.currentSkillContext
-          ? `Skill: ${this.currentSkillContext.name}\n${this.currentSkillContext.instructions.slice(0, 500)}`
+          ? `Skill: ${this.currentSkillContext.name}\n${this.currentSkillContext.instructions.slice(0, PLANNER_SKILL_CONTEXT_LIMIT)}`
           : undefined,
       };
 
@@ -1115,6 +1131,7 @@ ${taskResultsSection}${failedSection}
 
         // Stream with end-to-end tool support
         let currentMessages = [...messages];
+        let allStreamedText = ''; // Accumulates text across all tool rounds
         let toolRound = 0;
         const maxToolRounds = 5;
         let continueStreaming = true;
@@ -1157,14 +1174,22 @@ ${taskResultsSection}${failedSection}
             fullResponse, pendingToolCalls, toolResults,
           );
 
-          // Reset fullResponse for the continuation — the accumulated text from
-          // previous rounds is already stored in memory via buildToolInteractionMessages
+          // Track total accumulated text across all rounds for the final memory entry.
+          // Reset the per-round buffer so the next streaming round starts fresh,
+          // but preserve the full text for the final assistant message.
+          allStreamedText += fullResponse;
           fullResponse = '';
           currentMessages = [...currentMessages, assistantToolMsg, userToolResultMsg];
         }
 
+        // Combine all streamed text across rounds
+        fullResponse = allStreamedText + fullResponse;
+
         // Fallback: if no text was produced at all, use non-streaming path
         if (!fullResponse.trim()) {
+          // Roll back any tool interaction messages added during the failed streaming attempt
+          // to prevent duplicate/incoherent messages when the fallback adds its own
+          this.memory.truncateTo(messageCountAfterUser);
           this.emitEvent({ type: 'thinking', content: 'Finalizing response...' });
           const fallbackResult = await this.handleDirectRequest(userMessage);
           fullResponse = fallbackResult.content;
@@ -1371,7 +1396,7 @@ ${taskResultsSection}${failedSection}
         toolNames: tools?.map(t => t.name),
         toolDescriptions: tools?.map(t => t.description),
         skillContext: this.currentSkillContext
-          ? `Skill: ${this.currentSkillContext.name}\n${this.currentSkillContext.instructions.slice(0, 500)}`
+          ? `Skill: ${this.currentSkillContext.name}\n${this.currentSkillContext.instructions.slice(0, PLANNER_SKILL_CONTEXT_LIMIT)}`
           : undefined,
       });
 
@@ -1413,6 +1438,8 @@ ${taskResultsSection}${failedSection}
         }
       }
       accumulatedTasks = [...accumulatedTasks, ...newTasks];
+      // Keep currentTasks in sync so UI and writeTaskMemory see evaluation-phase tasks
+      this.currentTasks = accumulatedTasks;
 
       // Build final task-result pairs for re-aggregation (all tasks across all waves)
       const allFinalPairs: Array<{ task: Task; result: TaskResult }> = [];

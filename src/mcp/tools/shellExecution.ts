@@ -83,6 +83,10 @@ export async function executeCommandTool(
   }
 
   // --- Validate blocked patterns ---
+  // NOTE: This is a best-effort blocklist using simple substring matching.
+  // It can be bypassed with shell metacharacters (e.g., variable substitution,
+  // quoting tricks). The primary security boundary is the sandbox (allowedRoots)
+  // and the `enabled` flag — this blocklist is defense-in-depth only.
   if (shellConfig.blockedPatterns.length > 0) {
     const lower = command.toLowerCase();
     for (const pattern of shellConfig.blockedPatterns) {

@@ -12,7 +12,10 @@ export function interpolateEnvVars(value: string): string {
     if (envValue !== undefined) {
       return envValue;
     }
-    // Return empty string if env var not found (don't leave the placeholder)
+    // Warn about missing env vars — these often indicate misconfiguration
+    if (typeof process !== 'undefined' && process.stderr) {
+      process.stderr.write(`\x1b[33m⚠ Config: environment variable "${varName}" is not set, using empty string\x1b[0m\n`);
+    }
     return '';
   });
 }

@@ -2,6 +2,7 @@
  * Web search tools for MCP
  */
 
+import { lookup } from 'dns/promises';
 import { parseHTML } from 'linkedom';
 
 export interface WebSearchResult {
@@ -107,6 +108,28 @@ export async function webSearchTool(
  * Check whether a hostname resolves to a private/internal network address.
  * Used to prevent SSRF attacks by blocking requests to internal services.
  */
+/**
+ * Check whether an IP address string is in a private/reserved range.
+ */
+function isPrivateIPv4(ip: string): boolean {
+  const match = ip.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!match) return false;
+  const [, a, b] = match.map(Number);
+  // 127.0.0.0/8 — loopback
+  if (a === 127) return true;
+  // 10.0.0.0/8 — private
+  if (a === 10) return true;
+  // 172.16.0.0/12 — private
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  // 192.168.0.0/16 — private
+  if (a === 192 && b === 168) return true;
+  // 169.254.0.0/16 — link-local / cloud metadata
+  if (a === 169 && b === 254) return true;
+  // 0.0.0.0/8
+  if (a === 0) return true;
+  return false;
+}
+
 export function isPrivateHost(hostname: string): boolean {
   const lower = hostname.toLowerCase();
 
@@ -116,25 +139,38 @@ export function isPrivateHost(hostname: string): boolean {
   // IPv6 loopback
   if (lower === '::1' || lower === '0:0:0:0:0:0:0:1') return true;
 
-  // Parse IPv4
-  const ipv4Match = lower.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (ipv4Match) {
-    const [, a, b] = ipv4Match.map(Number);
-    // 127.0.0.0/8 — loopback
-    if (a === 127) return true;
-    // 10.0.0.0/8 — private
-    if (a === 10) return true;
-    // 172.16.0.0/12 — private
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    // 192.168.0.0/16 — private
-    if (a === 192 && b === 168) return true;
-    // 169.254.0.0/16 — link-local / cloud metadata
-    if (a === 169 && b === 254) return true;
-    // 0.0.0.0/8
-    if (a === 0) return true;
+  // IPv4-mapped IPv6 (e.g. ::ffff:127.0.0.1 or ::ffff:7f00:1)
+  const mappedMatch = lower.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+  if (mappedMatch) {
+    return isPrivateIPv4(mappedMatch[1]);
   }
 
+  // Plain IPv4
+  if (isPrivateIPv4(lower)) return true;
+
   return false;
+}
+
+/**
+ * Resolve a hostname via DNS and check whether the resolved IP is private.
+ * Prevents DNS rebinding attacks where a public hostname resolves to a private IP.
+ */
+export async function resolveAndCheckHost(hostname: string): Promise<{ isPrivate: boolean; resolvedIP?: string }> {
+  // Skip DNS lookup for raw IP addresses — just check directly
+  if (isPrivateHost(hostname)) {
+    return { isPrivate: true, resolvedIP: hostname };
+  }
+
+  try {
+    const { address } = await lookup(hostname);
+    if (isPrivateHost(address)) {
+      return { isPrivate: true, resolvedIP: address };
+    }
+    return { isPrivate: false, resolvedIP: address };
+  } catch {
+    // DNS resolution failed — reject to be safe
+    return { isPrivate: true };
+  }
 }
 
 const MAX_REDIRECTS = 5;
@@ -159,9 +195,11 @@ export async function fetchUrlTool(url: string): Promise<FetchResult> {
     }
 
     // SSRF protection: block requests to private/internal network addresses
+    // Resolve DNS to catch rebinding attacks (public hostname → private IP)
     const hostname = parsedUrl.hostname.replace(/^\[|\]$/g, '');
-    if (isPrivateHost(hostname)) {
-      return { success: false, error: `Fetching internal/private network addresses is not allowed: "${hostname}"` };
+    const dnsCheck = await resolveAndCheckHost(hostname);
+    if (dnsCheck.isPrivate) {
+      return { success: false, error: `Fetching internal/private network addresses is not allowed: "${hostname}"${dnsCheck.resolvedIP ? ` (resolves to ${dnsCheck.resolvedIP})` : ''}` };
     }
 
     const fetchHeaders = {
