@@ -732,6 +732,17 @@ export class Queen {
 
               replanTriggered = true;
               replanReason = decision.reason;
+            } else if (decision.action === 'accept_partial' || decision.action === 'accept_failure') {
+              log.info('Queen', `Escalation (${decision.action}): ${decision.reason}`, {
+                taskId,
+                exitReason: result.exitReason,
+              });
+            } else if (decision.action === 'retry' || decision.action === 'retry_stronger_model') {
+              // Future: implement retry with backoff / model escalation
+              log.info('Queen', `Escalation (${decision.action}): ${decision.reason} [not yet implemented — treating as pass]`, {
+                taskId,
+                exitReason: result.exitReason,
+              });
             }
           }
         });

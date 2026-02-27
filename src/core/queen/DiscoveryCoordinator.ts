@@ -219,12 +219,21 @@ export class DiscoveryCoordinator {
    * Remove findings that duplicate existing ones (exact match or high bigram similarity).
    */
   private deduplicateFindings(newFindings: Finding[], existing: Finding[]): Finding[] {
-    return newFindings.filter(newF => {
-      return !existing.some(existingF => {
+    const accepted: Finding[] = [];
+    for (const newF of newFindings) {
+      const isDuplicateOfExisting = existing.some(existingF => {
         if (newF.content === existingF.content) return true;
         return this.stringSimilarity(newF.content, existingF.content) > 0.85;
       });
-    });
+      const isDuplicateWithinBatch = accepted.some(acceptedF => {
+        if (newF.content === acceptedF.content) return true;
+        return this.stringSimilarity(newF.content, acceptedF.content) > 0.85;
+      });
+      if (!isDuplicateOfExisting && !isDuplicateWithinBatch) {
+        accepted.push(newF);
+      }
+    }
+    return accepted;
   }
 
   /**
