@@ -85,4 +85,8 @@ describe('safeParseToolArgs', () => {
   it('returns empty object for empty string', () => {
     expect(safeParseToolArgs('')).toEqual({});
   });
+
+  it('returns empty object for truncated JSON (stream cut off mid-object)', () => {
+    expect(safeParseToolArgs('{"query": "tes')).toEqual({});
+  });
 });

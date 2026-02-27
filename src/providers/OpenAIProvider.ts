@@ -194,7 +194,7 @@ export class OpenAIProvider extends LLMProvider {
         toolCall: {
           id: currentToolCall.id,
           name: currentToolCall.name,
-          arguments: JSON.parse(currentToolCall.arguments || '{}'),
+          arguments: safeParseToolArgs(currentToolCall.arguments),
         },
       };
     }
