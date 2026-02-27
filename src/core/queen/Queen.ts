@@ -858,11 +858,11 @@ export class Queen {
       // Clear the mid-flight callback
       this.workerPool.setOnTaskComplete(undefined);
 
-      // Build final results array for aggregation
-      const finalResults: TaskResult[] = [];
+      // Build final task-result pairs for aggregation
+      const finalPairs: Array<{ task: Task; result: TaskResult }> = [];
       for (const task of allTasks) {
         const result = allResults.get(task.id);
-        if (result) finalResults.push(result);
+        if (result) finalPairs.push({ task, result });
       }
 
       // Record tool effectiveness for session learning
@@ -885,7 +885,7 @@ export class Queen {
       }
 
       // Aggregate all results
-      return this.aggregateResults(originalRequest, allTasks, finalResults);
+      return this.aggregateResults(originalRequest, finalPairs);
     } catch (error) {
       // Always clean up
       this.workerPool.setOnTaskComplete(undefined);
@@ -904,27 +904,20 @@ export class Queen {
   /**
    * Aggregate worker results into a final response
    */
-  private async aggregateResults(originalRequest: string, tasks: Task[], results: TaskResult[]): Promise<{ content: string; tokenUsage?: TokenUsage }> {
+  private async aggregateResults(originalRequest: string, taskResults: Array<{ task: Task; result: TaskResult }>): Promise<{ content: string; tokenUsage?: TokenUsage }> {
     // Sum token usage from all worker results
     const workerTokens: TokenUsage = { input: 0, output: 0, total: 0 };
-    for (const r of results) {
-      if (r.tokenUsage) {
-        workerTokens.input += r.tokenUsage.input;
-        workerTokens.output += r.tokenUsage.output;
-        workerTokens.total += r.tokenUsage.total;
+    for (const { result } of taskResults) {
+      if (result.tokenUsage) {
+        workerTokens.input += result.tokenUsage.input;
+        workerTokens.output += result.tokenUsage.output;
+        workerTokens.total += result.tokenUsage.total;
       }
     }
 
     // Filter successful vs failed results
-    const successful: Array<{ task: Task; result: TaskResult }> = [];
-    const failed: Array<{ task: Task; result: TaskResult }> = [];
-    for (let i = 0; i < tasks.length && i < results.length; i++) {
-      if (results[i].success && results[i].output.trim()) {
-        successful.push({ task: tasks[i], result: results[i] });
-      } else {
-        failed.push({ task: tasks[i], result: results[i] });
-      }
-    }
+    const successful = taskResults.filter(({ result }) => result.success && result.output.trim());
+    const failed = taskResults.filter(({ result }) => !result.success || !result.output.trim());
 
     if (successful.length === 0) {
       // Surface partial work and structured errors instead of a generic message
@@ -1411,15 +1404,15 @@ ${taskResultsSection}${failedSection}
       }
       accumulatedTasks = [...accumulatedTasks, ...newTasks];
 
-      // Build final results for re-aggregation (all tasks across all waves)
-      const allFinalResults: TaskResult[] = [];
+      // Build final task-result pairs for re-aggregation (all tasks across all waves)
+      const allFinalPairs: Array<{ task: Task; result: TaskResult }> = [];
       for (const task of accumulatedTasks) {
         const result = accumulatedResults.get(task.id);
-        if (result) allFinalResults.push(result);
+        if (result) allFinalPairs.push({ task, result });
       }
 
       // Re-aggregate
-      currentResult = await this.aggregateResults(originalRequest, accumulatedTasks, allFinalResults);
+      currentResult = await this.aggregateResults(originalRequest, allFinalPairs);
     }
 
     return currentResult;
