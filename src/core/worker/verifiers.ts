@@ -160,7 +160,8 @@ The "confidence" field represents HOW WELL the result meets the criteria (0.0 = 
 - complete=true with confidence=0.95 means "fully meets criteria with high quality"
 
 Rules:
-- Be strict — only mark complete if ALL criteria are fully satisfied.
+- For code execution, data retrieval, or factual tasks: Be strict — only mark complete if ALL criteria are fully satisfied.
+- For research, analysis, or information-gathering tasks: Mark complete=true if the result provides substantive, well-sourced findings covering the main aspects of the criteria, even if not exhaustive. Good research with real data is better than endless searching for perfection.
 - If the result says "I cannot" or refuses to attempt the task despite having tools, mark INCOMPLETE with LOW confidence.
 - CRITICAL: Check the Tool Output Summary above carefully. If a tool returned actual data (not an error), that data is REAL. Only flag data as fabricated if the specific numbers/facts do NOT appear anywhere in any successful tool output.
 - If a tool output starts with "Error:" that tool call failed. If it starts with data (JSON, text), that tool call SUCCEEDED and its data is valid.
