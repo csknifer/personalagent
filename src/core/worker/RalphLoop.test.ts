@@ -5,6 +5,7 @@ import {
   ConvergenceTracker, DimensionalVerifier,
   generateReflexion, generateDimensionalReflexion,
   computeStringSimilarity,
+  buildIterationPrompt,
 } from './RalphLoop.js';
 import { MockProvider, MockMCPServer } from '../../test/helpers.js';
 import type { Task, TaskResult, Verification, DimensionalVerification, CriterionScore } from '../types.js';
@@ -1440,5 +1441,161 @@ describe('ConvergenceTracker pessimistic aggregation', () => {
     const state = tracker.getState();
     // a and b are stagnating, c is converging → 2 stagnating > 1 converging
     expect(state.overallTrend).toBe('stagnating');
+  });
+});
+
+// =============================================================================
+// Confidence Plateau Exit Tests
+// =============================================================================
+
+describe('ralphLoop confidence plateau exit', () => {
+  let provider: MockProvider;
+
+  beforeEach(() => {
+    provider = new MockProvider();
+    getProgressTracker().reset();
+  });
+
+  it('exits with success when confidence plateaus above 0.6 for 3 iterations', async () => {
+    // Simulate 3 iterations where confidence is stable around 0.7 but never marked complete
+    provider.responses = [
+      'Research attempt 1 with good findings',
+      JSON.stringify({ complete: false, confidence: 0.68, feedback: 'Good but missing some details', nextAction: 'Search more' }),
+      'Research attempt 2 with similar findings',
+      JSON.stringify({ complete: false, confidence: 0.70, feedback: 'Still missing minor details', nextAction: 'Try another source' }),
+      'Research attempt 3 with same level of quality',
+      JSON.stringify({ complete: false, confidence: 0.72, feedback: 'Similar quality', nextAction: 'Find more sources' }),
+      // These should never be reached:
+      'Attempt 4 should not happen',
+      JSON.stringify({ complete: false, confidence: 0.72, feedback: 'Unreachable' }),
+    ];
+
+    const task = createTask({ successCriteria: 'Research the topic thoroughly' });
+    const result = await ralphLoop(provider, task, {
+      maxIterations: 10,
+      timeout: 30000,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.iterations).toBe(3);
+    // Should return best output, not last
+    expect(result.bestScore).toBeGreaterThanOrEqual(0.68);
+  });
+
+  it('does not plateau-exit when confidence is below 0.6', async () => {
+    provider.responses = [
+      'Poor attempt 1',
+      JSON.stringify({ complete: false, confidence: 0.4, feedback: 'Bad' }),
+      'Poor attempt 2',
+      JSON.stringify({ complete: false, confidence: 0.42, feedback: 'Still bad' }),
+      'Poor attempt 3',
+      JSON.stringify({ complete: false, confidence: 0.41, feedback: 'Not improving' }),
+      // Should reach this since 0.4 < 0.6 threshold
+      'Poor attempt 4',
+      JSON.stringify({ complete: false, confidence: 0.15, feedback: 'Got worse' }),
+    ];
+
+    const task = createTask({ successCriteria: 'Do something' });
+    const result = await ralphLoop(provider, task, {
+      maxIterations: 10,
+      timeout: 30000,
+    });
+
+    // Should NOT exit via plateau (below 0.6), should exit via hopelessness or max iterations
+    expect(result.iterations).toBeGreaterThan(3);
+  });
+
+  it('does not plateau-exit when confidence is improving', async () => {
+    provider.responses = [
+      'Improving attempt 1',
+      JSON.stringify({ complete: false, confidence: 0.6, feedback: 'Okay' }),
+      'Improving attempt 2',
+      JSON.stringify({ complete: false, confidence: 0.7, feedback: 'Better' }),
+      'Improving attempt 3',
+      JSON.stringify({ complete: true, confidence: 0.9, feedback: 'Great' }),
+    ];
+
+    const task = createTask();
+    const result = await ralphLoop(provider, task, {
+      maxIterations: 10,
+      timeout: 30000,
+    });
+
+    // Range 0.6→0.7→0.9 = 0.3 > 0.05, so no plateau. Exits via complete=true.
+    expect(result.success).toBe(true);
+    expect(result.iterations).toBe(3);
+  });
+});
+
+// =============================================================================
+// Time Budget Awareness Tests (iterationPrompt)
+// =============================================================================
+
+describe('buildIterationPrompt time budget', () => {
+  it('includes time warning when 70% elapsed', () => {
+    // buildIterationPrompt imported at top from RalphLoop.js barrel
+    const context = {
+      task: { description: 'test', successCriteria: 'done', dependencies: [], priority: 1, status: 'pending' as const, id: 't1', createdAt: new Date() },
+      iteration: 3,
+      previousAttempts: ['prev'],
+      feedback: ['some feedback'],
+      findings: [],
+      toolCalls: 0,
+      llmCalls: 0,
+      consecutiveAllToolFailures: 0,
+      scratchpad: [],
+      retainedToolResults: new Map(),
+      maxRetainedTokens: 5000,
+      timeBudget: { remainingMs: 90000, percentElapsed: 70 },
+    };
+
+    const prompt = buildIterationPrompt(context);
+    expect(prompt).toContain('TIME WARNING');
+    expect(prompt).toContain('SYNTHESIZE');
+  });
+
+  it('includes milder time status at 50% elapsed', () => {
+    // buildIterationPrompt imported at top from RalphLoop.js barrel
+    const context = {
+      task: { description: 'test', successCriteria: 'done', dependencies: [], priority: 1, status: 'pending' as const, id: 't1', createdAt: new Date() },
+      iteration: 2,
+      previousAttempts: [],
+      feedback: [],
+      findings: [],
+      toolCalls: 0,
+      llmCalls: 0,
+      consecutiveAllToolFailures: 0,
+      scratchpad: [],
+      retainedToolResults: new Map(),
+      maxRetainedTokens: 5000,
+      timeBudget: { remainingMs: 150000, percentElapsed: 55 },
+    };
+
+    const prompt = buildIterationPrompt(context);
+    expect(prompt).toContain('Time Status');
+    expect(prompt).toContain('wrapping up');
+    expect(prompt).not.toContain('TIME WARNING');
+  });
+
+  it('does not include time info when under 50%', () => {
+    // buildIterationPrompt imported at top from RalphLoop.js barrel
+    const context = {
+      task: { description: 'test', successCriteria: 'done', dependencies: [], priority: 1, status: 'pending' as const, id: 't1', createdAt: new Date() },
+      iteration: 1,
+      previousAttempts: [],
+      feedback: [],
+      findings: [],
+      toolCalls: 0,
+      llmCalls: 0,
+      consecutiveAllToolFailures: 0,
+      scratchpad: [],
+      retainedToolResults: new Map(),
+      maxRetainedTokens: 5000,
+      timeBudget: { remainingMs: 250000, percentElapsed: 20 },
+    };
+
+    const prompt = buildIterationPrompt(context);
+    expect(prompt).not.toContain('TIME WARNING');
+    expect(prompt).not.toContain('Time Status');
   });
 });
