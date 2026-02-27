@@ -69,10 +69,6 @@ export interface Task {
   maxIterationsOverride?: number;
   /** Per-task timeout override in ms (from complexity estimate) */
   timeoutOverride?: number;
-  /** Compressed conversation summary for worker context */
-  conversationSummary?: string;
-  /** User preferences extracted from conversation */
-  userPreferences?: string[];
   /** Tool effectiveness hints from session history */
   toolEffectivenessHints?: string;
   /** Cross-session strategy hints */

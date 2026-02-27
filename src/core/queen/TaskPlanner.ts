@@ -53,8 +53,6 @@ For decomposed:
 {
   "type": "decomposed",
   "reasoning": "Brief explanation of the decomposition strategy",
-  "conversationSummary": "2-3 sentence summary of relevant conversation context that workers need to understand references",
-  "userPreferences": ["prefers concise answers", "technical audience"],
   "tasks": [
     {
       "id": "task-1",
@@ -76,7 +74,16 @@ For decomposed:
 - Consider conversation context for interpreting follow-up references ("also", "that", "those", "it")
 - **estimatedComplexity**: "low" for simple lookups (single search/fetch), "medium" for multi-step research, "high" for deep analysis requiring multiple sources and synthesis
 - **discoveryMode**: Set \`"discoveryMode": true\` in the top-level JSON when the request is investigative — researching a person, company, or topic in depth; competitive analysis; or any request that says "deep research", "investigate", or "full profile". For discovery requests, initial tasks should be BROAD discovery (cast a wide net) rather than targeted deep dives. The system will plan follow-up waves based on findings.
-- When decomposing, include a **conversationSummary** (2-3 sentences of relevant context from conversation history) and **userPreferences** (array of inferred user preferences like "prefers bullet points") in the top-level JSON. Workers have no conversation history — this gives them necessary context.
+## Task Description Rules
+Task descriptions must be **minimal** — maximum signal, minimum noise:
+- **The goal**: what to find or do
+- **Only non-obvious context**: facts the worker cannot discover from its tools
+
+Do NOT include in task descriptions:
+- Information available via search or file tools
+- Style or formatting preferences
+- Conversation history summaries
+- Metadata the worker doesn't need
 `;
 
 export class TaskPlanner {
@@ -376,14 +383,6 @@ export class TaskPlanner {
       }
 
       if (parsed.type === 'decomposed' && Array.isArray(parsed.tasks)) {
-        // Extract conversation context for workers (capped)
-        const conversationSummary = typeof parsed.conversationSummary === 'string'
-          ? parsed.conversationSummary.slice(0, 800) || undefined
-          : undefined;
-        const userPreferences = Array.isArray(parsed.userPreferences)
-          ? parsed.userPreferences.map(String).filter(Boolean).slice(0, 5)
-          : undefined;
-
         // Validate and convert tasks
         const tasks: Task[] = parsed.tasks
           .slice(0, this.maxTasksPerPlan)
@@ -413,8 +412,6 @@ export class TaskPlanner {
               status: 'pending' as TaskStatus,
               createdAt: new Date(),
               estimatedComplexity: complexity,
-              conversationSummary,
-              userPreferences: userPreferences?.length ? userPreferences : undefined,
               ...timeoutOverrides,
             };
           });

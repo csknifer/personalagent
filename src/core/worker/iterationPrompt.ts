@@ -104,14 +104,6 @@ ${context.task.successCriteria}
 
 `;
 
-  // Compressed conversation context for workers (episodic memory)
-  if (context.task.conversationSummary) {
-    prompt += `## Conversation Context\n${context.task.conversationSummary}\n\n`;
-  }
-  if (context.task.userPreferences && context.task.userPreferences.length > 0) {
-    prompt += `## User Preferences\n${context.task.userPreferences.map(p => `- ${p}`).join('\n')}\n\n`;
-  }
-
   // Tool effectiveness hints from session history (procedural memory)
   if (context.task.toolEffectivenessHints) {
     prompt += `## Tool Effectiveness (from prior tasks this session)\n${context.task.toolEffectivenessHints}\n\n`;
