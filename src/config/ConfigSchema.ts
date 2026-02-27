@@ -30,17 +30,10 @@ export const ProvidersConfigSchema = z.object({
   ollama: ProviderConfigSchema.optional(),
 }).passthrough();
 
-export const FastClassifierConfigSchema = z.object({
-  enabled: z.boolean().default(true),
-  maxTokensForDirect: z.number().int().positive().default(50),
-  maxTokensForUncertain: z.number().int().positive().default(200),
-});
-
 export const QueenConfigSchema = z.object({
   provider: z.string().nullable().optional(),
   model: z.string().nullable().optional(),
   systemPrompt: z.string().nullable().optional(),
-  fastClassifier: FastClassifierConfigSchema.default({}),
   aggregationOverlapThreshold: z.number().min(0).max(1).default(0.15).optional(),
 });
 

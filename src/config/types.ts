@@ -38,17 +38,10 @@ export interface ProvidersConfig {
   [key: string]: ProviderConfig | string | undefined;
 }
 
-export interface FastClassifierConfig {
-  enabled: boolean;
-  maxTokensForDirect: number;
-  maxTokensForUncertain: number;
-}
-
 export interface QueenConfig {
   provider?: string | null;
   model?: string | null;
   systemPrompt?: string | null;
-  fastClassifier?: FastClassifierConfig;
   aggregationOverlapThreshold?: number;
 }
 

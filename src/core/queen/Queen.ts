@@ -8,7 +8,6 @@ import { WorkerPool, createWorkerPool } from '../worker/WorkerPool.js';
 import type { Message, Task, TaskPlan, TaskResult, TokenUsage, AgentEvent, AgentEventHandler, WorkerState, AgentPhase, CompletedTaskSummary, EvaluationResult } from '../types.js';
 import { classifyEscalation } from './EscalationClassifier.js';
 import { buildEvaluatorPrompt, parseEvaluationResult } from './ResultEvaluator.js';
-import { classifyFast } from './FastClassifier.js';
 import { shouldSynthesizeWithLLM } from './AggregationHeuristic.js';
 import { ToolEffectivenessTracker } from './ToolEffectivenessTracker.js';
 import { StrategyStore } from './StrategyStore.js';
