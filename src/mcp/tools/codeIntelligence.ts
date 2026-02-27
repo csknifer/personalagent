@@ -82,6 +82,13 @@ export async function globTool(
     const rawCwd = options.cwd ?? process.cwd();
     const cwd = guardPath(rawCwd, options.sandbox);
 
+    if (options.sandbox?.enabled && pattern.includes('..')) {
+      return {
+        success: false,
+        error: 'Glob pattern contains path traversal ("..") which is not allowed in sandbox mode',
+      };
+    }
+
     const defaultIgnore = ['**/node_modules/**', '**/.git/**'];
     const ignore = options.ignore
       ? [...defaultIgnore, ...options.ignore]

@@ -76,6 +76,46 @@ describe('globTool', () => {
 });
 
 /* ------------------------------------------------------------------ */
+/*  glob sandbox traversal                                             */
+/* ------------------------------------------------------------------ */
+
+describe('globTool sandbox traversal', () => {
+  it('blocks patterns with ../ traversal', async () => {
+    const result = await globTool('../../../etc/*', {
+      cwd: tempDir,
+      sandbox: { enabled: true, allowedRoots: [tempDir] },
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('traversal');
+  });
+
+  it('blocks patterns with embedded .. segments', async () => {
+    const result = await globTool('src/../../etc/passwd', {
+      cwd: tempDir,
+      sandbox: { enabled: true, allowedRoots: [tempDir] },
+    });
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('traversal');
+  });
+
+  it('allows normal patterns within sandbox', async () => {
+    const result = await globTool('**/*.ts', {
+      cwd: tempDir,
+      sandbox: { enabled: true, allowedRoots: [tempDir] },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('allows .. in patterns when sandbox is disabled', async () => {
+    const result = await globTool('../*', {
+      cwd: tempDir,
+    });
+    // Should not block — sandbox is not enabled
+    expect(result.success).toBe(true);
+  });
+});
+
+/* ------------------------------------------------------------------ */
 /*  grep                                                               */
 /* ------------------------------------------------------------------ */
 
