@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import { KnowledgeGraph } from './KnowledgeGraph.js';
-import type { ExtractedEntity, ExtractedRelationship } from './KnowledgeGraph.js';
 
 describe('KnowledgeGraph', () => {
   describe('merge', () => {

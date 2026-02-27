@@ -36,6 +36,15 @@ describe('DiscoveryCoordinator integration', () => {
 
     const mockProvider = {
       chat: vi.fn()
+        // Graph extraction after wave 1
+        .mockResolvedValueOnce({
+          content: JSON.stringify({
+            entities: [
+              { name: 'John Doe', type: 'person', properties: { city: 'Tampa FL' }, confidence: 0.8 },
+            ],
+            relationships: [],
+          }),
+        })
         // Wave 1 decision: continue
         .mockResolvedValueOnce({
           content: JSON.stringify({
@@ -46,6 +55,17 @@ describe('DiscoveryCoordinator integration', () => {
               description: 'Verify employer at Acme Corp',
               successCriteria: 'Employment confirmed or denied',
             }],
+          }),
+        })
+        // Graph extraction after wave 2
+        .mockResolvedValueOnce({
+          content: JSON.stringify({
+            entities: [
+              { name: 'Acme Corp', type: 'organization', properties: {}, confidence: 0.7 },
+            ],
+            relationships: [
+              { source: 'John Doe', target: 'Acme Corp', predicate: 'works_at', evidence: 'Employer confirmed', weight: 0.9 },
+            ],
           }),
         })
         // Wave 2 decision: sufficient
@@ -87,14 +107,13 @@ describe('DiscoveryCoordinator integration', () => {
       eventHandler: (e) => events.push(e),
     });
 
-    // Verify wave 2 tasks received discovery context
+    // Verify wave 2 tasks received discovery context (graph-aware)
     expect(wave2Tasks).toBeDefined();
     expect(wave2Tasks![0].dependencyResults).toBeDefined();
     const context = wave2Tasks![0].dependencyResults!.get('discovery-context');
     expect(context).toBeDefined();
-    expect(context).toContain('Name: John Doe');
-    expect(context).toContain('City: Tampa FL');
-    expect(context).toContain('Wave 1');
+    expect(context).toContain('John Doe');
+    expect(context).toContain('Knowledge Graph');
 
     // Verify events were emitted in correct order
     const eventTypes = events.map(e => e.type);

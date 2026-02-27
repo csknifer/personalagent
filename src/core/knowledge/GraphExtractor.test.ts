@@ -1,9 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
 import { GraphExtractor, formatExtractionInput } from './GraphExtractor.js';
-import type { ExtractedEntity, ExtractedRelationship } from './KnowledgeGraph.js';
+import type { LLMProvider } from '../../providers/Provider.js';
 
 // Mock provider
-function createMockProvider(response: string) {
+function createMockProvider(response: string): { chat: ReturnType<typeof vi.fn> } & LLMProvider {
   return {
     name: 'mock',
     model: 'mock-model',
@@ -12,7 +12,7 @@ function createMockProvider(response: string) {
     complete: vi.fn(),
     supportsTools: () => false,
     getAvailableModels: () => ['mock-model'],
-  };
+  } as unknown as { chat: ReturnType<typeof vi.fn> } & LLMProvider;
 }
 
 describe('GraphExtractor', () => {
@@ -28,7 +28,7 @@ describe('GraphExtractor', () => {
         ],
       });
 
-      const extractor = new GraphExtractor(createMockProvider(response) as any);
+      const extractor = new GraphExtractor(createMockProvider(response));
       const result = await extractor.extract([
         { workerId: 'w1-task-1', findings: ['Acme Corp was founded by Jane Doe in 2019'], scratchpad: [] },
       ]);
@@ -45,7 +45,7 @@ describe('GraphExtractor', () => {
         relationships: [],
       }) + '\n```';
 
-      const extractor = new GraphExtractor(createMockProvider(response) as any);
+      const extractor = new GraphExtractor(createMockProvider(response));
       const result = await extractor.extract([
         { workerId: 'w1-task-1', findings: ['Test is a concept'], scratchpad: [] },
       ]);
@@ -54,7 +54,7 @@ describe('GraphExtractor', () => {
     });
 
     it('returns empty results on invalid JSON', async () => {
-      const extractor = new GraphExtractor(createMockProvider('not json at all') as any);
+      const extractor = new GraphExtractor(createMockProvider('not json at all'));
       const result = await extractor.extract([
         { workerId: 'w1-task-1', findings: ['Something'], scratchpad: [] },
       ]);
@@ -67,7 +67,7 @@ describe('GraphExtractor', () => {
       const provider = createMockProvider('');
       provider.chat = vi.fn(async () => { throw new Error('LLM API error'); });
 
-      const extractor = new GraphExtractor(provider as any);
+      const extractor = new GraphExtractor(provider);
       const result = await extractor.extract([
         { workerId: 'w1-task-1', findings: ['Something'], scratchpad: [] },
       ]);
@@ -78,7 +78,7 @@ describe('GraphExtractor', () => {
 
     it('skips extraction when no findings provided', async () => {
       const provider = createMockProvider('{}');
-      const extractor = new GraphExtractor(provider as any);
+      const extractor = new GraphExtractor(provider);
       const result = await extractor.extract([
         { workerId: 'w1-task-1', findings: [], scratchpad: [] },
       ]);
@@ -96,7 +96,7 @@ describe('GraphExtractor', () => {
         relationships: [],
       });
 
-      const extractor = new GraphExtractor(createMockProvider(response) as any);
+      const extractor = new GraphExtractor(createMockProvider(response));
       const result = await extractor.extract([
         { workerId: 'w1-task-1', findings: ['Valid is a person'], scratchpad: [] },
       ]);

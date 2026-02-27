@@ -118,17 +118,17 @@ export class GraphExtractor {
       const parsed = JSON.parse(jsonStr);
 
       const entities: ExtractedEntity[] = (parsed.entities ?? [])
-        .filter((e: any) => e?.name && VALID_ENTITY_TYPES.has(e.type))
-        .map((e: any) => ({
+        .filter((e: Record<string, unknown>) => e?.name && typeof e.type === 'string' && VALID_ENTITY_TYPES.has(e.type))
+        .map((e: Record<string, unknown>) => ({
           name: String(e.name),
           type: e.type as EntityType,
-          properties: e.properties && typeof e.properties === 'object' ? e.properties : {},
+          properties: e.properties && typeof e.properties === 'object' ? e.properties as Record<string, string> : {},
           confidence: typeof e.confidence === 'number' ? Math.max(0, Math.min(1, e.confidence)) : 0.5,
         }));
 
       const relationships: ExtractedRelationship[] = (parsed.relationships ?? [])
-        .filter((r: any) => r?.source && r?.target && r?.predicate)
-        .map((r: any) => ({
+        .filter((r: Record<string, unknown>) => r?.source && r?.target && r?.predicate)
+        .map((r: Record<string, unknown>) => ({
           source: String(r.source),
           target: String(r.target),
           predicate: String(r.predicate),
