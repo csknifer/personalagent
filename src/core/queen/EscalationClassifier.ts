@@ -63,12 +63,10 @@ export function classifyEscalation(ctx: EscalationContext): EscalationDecision {
 
   // Budget nearly exhausted — suppress replanning to avoid wasting remaining budget on LLM calls
   if (ctx.remainingBudgetPercent !== undefined && ctx.remainingBudgetPercent < 15) {
-    if (!result.success) {
-      return {
-        action: 'accept_partial',
-        reason: `Budget nearly exhausted (${ctx.remainingBudgetPercent.toFixed(0)}% remaining) — using best partial result`,
-      };
-    }
+    return {
+      action: 'accept_partial',
+      reason: `Budget nearly exhausted (${ctx.remainingBudgetPercent.toFixed(0)}% remaining) — using best partial result`,
+    };
   }
 
   // If failure taxonomy is available, use it for richer decisions

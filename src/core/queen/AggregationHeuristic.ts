@@ -47,7 +47,6 @@ export function shouldSynthesizeWithLLM(
   }
 
   // If any task has dependencies on another, results are interrelated → always synthesize
-  const taskDescriptions = new Set(taskResults.map(t => t.description));
   for (const t of taskResults) {
     if (t.dependencies.length > 0) {
       return { shouldSynthesize: true, reason: 'task dependencies exist' };
