@@ -69,6 +69,10 @@ export interface RalphLoopContext {
   maxRetainedTokens: number;
   // Budget awareness
   budgetStatus?: { percentUsed: number; remaining: number };
+  // Confidence plateau tracking
+  previousScores?: number[];
+  // Time budget awareness
+  timeBudget?: { remainingMs: number; percentElapsed: number };
 }
 
 /**

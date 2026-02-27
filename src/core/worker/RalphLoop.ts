@@ -171,6 +171,13 @@ export async function ralphLoop(
       };
     }
 
+    // Update time budget awareness for iteration prompt
+    const elapsed = Date.now() - startTime;
+    context.timeBudget = {
+      remainingMs: timeout - elapsed,
+      percentElapsed: Math.round((elapsed / timeout) * 100),
+    };
+
     // Check budget exhaustion
     if (budgetGuard?.isExhausted()) {
       log.warn('RalphLoop', 'Budget exhausted — aborting loop', {
@@ -439,6 +446,31 @@ export async function ralphLoop(
     if (verification.confidence > (context.bestScore ?? 0)) {
       context.bestScore = verification.confidence;
       context.bestOutput = attempt.output;
+    }
+
+    // --- Confidence plateau: exit with success when quality stops improving ---
+    context.previousScores = context.previousScores || [];
+    context.previousScores.push(verification.confidence);
+    if (context.iteration >= 3 && !verification.complete && context.previousScores.length >= 3) {
+      const recent = context.previousScores.slice(-3);
+      const range = Math.max(...recent) - Math.min(...recent);
+      const best = Math.max(...recent);
+      if (range <= 0.05 && best >= 0.6) {
+        log.info('RalphLoop', `Confidence plateau at ${(best * 100).toFixed(0)}% — returning result`, {
+          workerId,
+          iteration: context.iteration,
+          recentScores: recent.map(s => s.toFixed(2)),
+        });
+        emitProgress(`plateau at ${(best * 100).toFixed(0)}% — returning result`);
+        return {
+          success: true,
+          output: context.bestOutput ?? attempt.output,
+          findings: context.findings.length > 0 ? context.findings : undefined,
+          iterations: context.iteration,
+          tokenUsage: totalTokens,
+          bestScore: context.bestScore,
+        };
+      }
     }
 
     if (verification.complete) {

@@ -265,6 +265,20 @@ Your previous response contained data that does NOT match your actual tool outpu
     prompt += '\n\n';
   }
 
+  // Time budget awareness: warn workers when time is running out
+  if (context.timeBudget && context.timeBudget.percentElapsed >= 70) {
+    prompt += `## TIME WARNING
+${context.timeBudget.percentElapsed}% of time budget used (${Math.round(context.timeBudget.remainingMs / 1000)}s remaining).
+SYNTHESIZE your findings now. Present the best answer with the data you have. Do NOT start new searches.
+
+`;
+  } else if (context.timeBudget && context.timeBudget.percentElapsed >= 50) {
+    prompt += `## Time Status
+${context.timeBudget.percentElapsed}% of time budget used. Start wrapping up research and focus on the most critical remaining criteria.
+
+`;
+  }
+
   // Instructions: selective focus for DCL, generic otherwise
   if (context.failingCriteria && context.failingCriteria.length > 0) {
     prompt += `## Instructions
