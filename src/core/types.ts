@@ -326,3 +326,6 @@ export interface LLMCallStats {
   byProvider: Record<string, number>;
   totalTokens: TokenUsage;
 }
+
+// Knowledge graph types (re-exported for convenience)
+export type { Entity, Relationship, EntityType, ExtractedEntity, ExtractedRelationship, GraphStats } from './knowledge/KnowledgeGraph.js';
