@@ -11,14 +11,6 @@ describe('SkillTracker', () => {
 
   beforeEach(() => {
     tracker = new SkillTracker('/fake/path.json');
-    // Reset internal data to avoid shared-reference bleeding between tests.
-    // DEFAULT_DATA is assigned by reference, so we need a fresh copy.
-    (tracker as unknown as { data: { version: string; usage: unknown[]; unmatchedQueries: unknown[]; suggestedTriggers: Record<string, string[]> } }).data = {
-      version: '1.0.0',
-      usage: [],
-      unmatchedQueries: [],
-      suggestedTriggers: {},
-    };
   });
 
   describe('recordInvocation + getAllStats', () => {
@@ -70,6 +62,19 @@ describe('SkillTracker', () => {
       const patterns = tracker.getUnmatchedPatterns(1);
       expect(patterns).toHaveLength(1);
       expect(patterns[0].count).toBe(2);
+    });
+  });
+
+  describe('instance isolation (no shared DEFAULT_DATA mutation)', () => {
+    it('two instances do not share the same data arrays', () => {
+      const a = new SkillTracker('/fake/a.json');
+      const b = new SkillTracker('/fake/b.json');
+
+      a.recordInvocation('s1', 'Skill', 'query', true, 100);
+
+      // Instance b must be unaffected
+      const statsB = b.getAllStats();
+      expect(statsB).toHaveLength(0);
     });
   });
 

@@ -42,15 +42,17 @@ export interface SkillTrackerData {
   suggestedTriggers: Record<string, string[]>; // skillId -> new triggers
 }
 
-const DEFAULT_DATA: SkillTrackerData = {
-  version: '1.0.0',
-  usage: [],
-  unmatchedQueries: [],
-  suggestedTriggers: {},
-};
+function createDefaultData(): SkillTrackerData {
+  return {
+    version: '1.0.0',
+    usage: [],
+    unmatchedQueries: [],
+    suggestedTriggers: {},
+  };
+}
 
 export class SkillTracker {
-  private data: SkillTrackerData = DEFAULT_DATA;
+  private data: SkillTrackerData = createDefaultData();
   private dataPath: string;
   private isDirty: boolean = false;
   private saveDebounceTimer: NodeJS.Timeout | null = null;
@@ -69,7 +71,7 @@ export class SkillTracker {
         const content = await readFile(this.dataPath, 'utf-8');
         const parsed = JSON.parse(content);
         this.data = {
-          ...DEFAULT_DATA,
+          ...createDefaultData(),
           ...parsed,
           usage: (parsed.usage || []).map((u: SkillUsageRecord) => ({
             ...u,
@@ -83,7 +85,7 @@ export class SkillTracker {
       }
     } catch (error) {
       // Start fresh if file is corrupted
-      this.data = DEFAULT_DATA;
+      this.data = createDefaultData();
     }
   }
 
@@ -279,7 +281,7 @@ export class SkillTracker {
    * Clear all tracking data
    */
   async clearAll(): Promise<void> {
-    this.data = DEFAULT_DATA;
+    this.data = createDefaultData();
     await this.save();
   }
 
