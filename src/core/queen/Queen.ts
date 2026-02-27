@@ -37,12 +37,18 @@ async function* streamWithTimeout<T>(
 ): AsyncGenerator<T> {
   const iterator = source[Symbol.asyncIterator]();
   while (true) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const result = await Promise.race([
       iterator.next(),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`${label} timed out — no response after ${Math.round(timeoutMs / 1000)}s`)), timeoutMs)
-      ),
-    ]);
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`${label} timed out — no response after ${Math.round(timeoutMs / 1000)}s`)),
+          timeoutMs,
+        );
+      }),
+    ]).finally(() => {
+      if (timer) clearTimeout(timer);
+    });
     if (result.done) break;
     yield result.value;
   }
@@ -658,13 +664,6 @@ export class Queen {
           toolDescriptions: tools?.map(t => t.description),
         },
       );
-
-      // Store discovery result in memory
-      this.memory.addMessage({
-        role: 'assistant',
-        content: discoveryResult.content,
-        timestamp: new Date(),
-      });
 
       this.emitPhaseChange('idle');
       return { content: discoveryResult.content };
@@ -1455,7 +1454,9 @@ ${taskResultsSection}${failedSection}
     const planningProvider = isTrackedProvider(provider)
       ? provider.withPurpose('planning')
       : wrapWithTracking(provider, { defaultPurpose: 'planning' });
-    this.taskPlanner = new TaskPlanner(planningProvider);
+    this.taskPlanner = new TaskPlanner(planningProvider, {
+      adaptiveTimeout: this.config.hive.ralphLoop.adaptiveTimeout,
+    });
   }
 
   /**

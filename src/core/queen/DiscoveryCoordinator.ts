@@ -102,12 +102,19 @@ export class DiscoveryCoordinator {
 
       // Execute wave with per-wave timeout
       const waveStart = Date.now();
+      let waveTimer: ReturnType<typeof setTimeout> | undefined;
       const results = await Promise.race([
         this.workerPool.executeTasks(currentTasks),
-        new Promise<Map<string, TaskResult>>((_, reject) =>
-          setTimeout(() => reject(new Error(`Wave ${wave} timed out after ${this.config.waveTimeout}ms`)), this.config.waveTimeout)
-        ),
-      ]).catch(() => new Map<string, TaskResult>());
+        new Promise<Map<string, TaskResult>>((_, reject) => {
+          waveTimer = setTimeout(
+            () => reject(new Error(`Wave ${wave} timed out after ${this.config.waveTimeout}ms`)),
+            this.config.waveTimeout,
+          );
+        }),
+      ]).catch(() => new Map<string, TaskResult>())
+        .finally(() => {
+          if (waveTimer) clearTimeout(waveTimer);
+        });
       const waveDuration = Date.now() - waveStart;
 
       // Collect findings from results
