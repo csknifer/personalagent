@@ -107,6 +107,7 @@ export class OllamaProvider extends LLMProvider {
       stream: true,
     });
 
+    let toolCallIdx = 0;
     for await (const chunk of response) {
       if (chunk.message.content) {
         yield { type: 'text', content: chunk.message.content };
@@ -118,7 +119,7 @@ export class OllamaProvider extends LLMProvider {
           yield {
             type: 'tool_call',
             toolCall: {
-              id: `call_${Date.now()}`,
+              id: `call_${Date.now()}_${toolCallIdx++}`,
               name: tc.function.name,
               arguments: tc.function.arguments as Record<string, unknown>,
             },

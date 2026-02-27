@@ -238,6 +238,7 @@ export class GeminiProvider extends LLMProvider {
       config,
     });
 
+    let toolCallIdx = 0;
     for await (const chunk of stream) {
       // Extract from raw parts to preserve thought_signature
       const parts = chunk.candidates?.[0]?.content?.parts;
@@ -255,7 +256,7 @@ export class GeminiProvider extends LLMProvider {
             yield {
               type: 'tool_call',
               toolCall: {
-                id: `call_${Date.now()}`,
+                id: `call_${Date.now()}_${toolCallIdx++}`,
                 name: fc.name || '',
                 arguments: (fc.args as Record<string, unknown>) || {},
                 ...(Object.keys(metadata).length > 0 ? { providerMetadata: metadata } : {}),
