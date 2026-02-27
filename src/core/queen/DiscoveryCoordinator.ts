@@ -21,6 +21,10 @@ import type {
   SkillContext,
   Message,
 } from '../types.js';
+import { KnowledgeGraph } from '../knowledge/KnowledgeGraph.js';
+import { GraphExtractor } from '../knowledge/GraphExtractor.js';
+import type { WorkerExtractionInput } from '../knowledge/GraphExtractor.js';
+import { extractScratchpad } from '../worker/ralphUtils.js';
 
 export interface DiscoveryCoordinatorOptions {
   provider: LLMProvider;
@@ -64,6 +68,8 @@ export class DiscoveryCoordinator {
     const waveHistory: WaveResult[] = [];
     const abandonedDirections: string[] = [];
     const totalStart = Date.now();
+    const graph = new KnowledgeGraph();
+    const extractor = new GraphExtractor(this.provider);
 
     // Phase: discovering
     eventHandler({ type: 'phase_change', phase: 'discovering', description: 'Starting progressive discovery' });
@@ -91,7 +97,9 @@ export class DiscoveryCoordinator {
 
       // For wave 2+, inject discovery context into tasks
       if (wave > 1) {
-        const discoveryContext = this.formatDiscoveryContext(allFindings, waveHistory, abandonedDirections);
+        const discoveryContext = graph.getStats().entityCount > 0
+          ? this.formatGraphContext(graph, abandonedDirections)
+          : this.formatDiscoveryContext(allFindings, waveHistory, abandonedDirections);
         for (const task of currentTasks) {
           if (!task.dependencyResults) {
             task.dependencyResults = new Map();
@@ -123,6 +131,22 @@ export class DiscoveryCoordinator {
       // Deduplicate against accumulated findings
       const newFindings = this.deduplicateFindings(waveFindings, allFindings);
       allFindings.push(...newFindings);
+
+      // --- Knowledge graph extraction ---
+      const extractionInputs: WorkerExtractionInput[] = [];
+      for (const task of currentTasks) {
+        const result = results.get(task.id);
+        if (result?.success) {
+          extractionInputs.push({
+            workerId: task.id,
+            findings: result.findings ?? [],
+            scratchpad: extractScratchpad(result.output),
+          });
+        }
+      }
+      const extracted = await extractor.extract(extractionInputs);
+      const workerIds = extractionInputs.map(i => i.workerId);
+      graph.merge(extracted.entities, extracted.relationships, wave, workerIds);
 
       // Emit worker_completed for each task
       for (const task of currentTasks) {
@@ -183,7 +207,7 @@ export class DiscoveryCoordinator {
     // Aggregation phase
     eventHandler({ type: 'phase_change', phase: 'aggregating', description: 'Synthesizing discovery findings' });
 
-    const content = await this.aggregate(request, allFindings, waveHistory);
+    const content = await this.aggregate(request, allFindings, waveHistory, graph);
 
     return {
       content,
@@ -286,6 +310,31 @@ export class DiscoveryCoordinator {
         parts.push(`- [Wave ${f.wave}, confidence ${f.confidence.toFixed(1)}] ${f.content}`);
       }
     }
+
+    if (abandonedDirections.length > 0) {
+      parts.push('\n### Abandoned Directions (do not revisit)');
+      for (const d of abandonedDirections) {
+        parts.push(`- ${d}`);
+      }
+    }
+
+    parts.push('\n### Instructions');
+    parts.push('Build on previous findings. Do NOT repeat what has already been discovered.');
+    parts.push('Focus on deepening understanding and cross-referencing across sources.');
+
+    return parts.join('\n');
+  }
+
+  /**
+   * Build structured graph context for next wave's workers.
+   */
+  private formatGraphContext(
+    graph: KnowledgeGraph,
+    abandonedDirections: string[],
+  ): string {
+    const parts: string[] = [];
+
+    parts.push(graph.getContext(''));
 
     if (abandonedDirections.length > 0) {
       parts.push('\n### Abandoned Directions (do not revisit)');
@@ -433,6 +482,7 @@ Should we continue investigating, or do we have sufficient information?`;
     request: string,
     findings: Finding[],
     waveHistory: WaveResult[],
+    graph?: KnowledgeGraph,
   ): Promise<string> {
     // Single wave, single successful result — pass through directly
     if (waveHistory.length === 1) {
@@ -443,8 +493,21 @@ Should we continue investigating, or do we have sufficient information?`;
       }
     }
 
-    // Multi-wave or multi-result: LLM synthesis
-    const systemMessage = `You are synthesizing findings from a multi-wave investigation.
+    // Use graph synthesis view if available, otherwise fall back to wave-based findings
+    const graphView = graph?.getSynthesisView();
+    const hasGraph = graphView && graphView.length > 0;
+
+    const systemMessage = hasGraph
+      ? `You are synthesizing findings from a multi-wave investigation.
+You have access to a structured knowledge graph extracted from the research.
+
+Produce a structured profile:
+- Use the knowledge graph structure to organize your response
+- Note confidence levels and corroboration status
+- Flag contradictions and single-source claims explicitly
+- Acknowledge gaps where information is missing
+- Be comprehensive but concise`
+      : `You are synthesizing findings from a multi-wave investigation.
 
 Produce a structured profile of what was discovered:
 - Group findings by category
@@ -453,18 +516,20 @@ Produce a structured profile of what was discovered:
 - Acknowledge gaps where information is missing
 - Be comprehensive but concise`;
 
-    const findingsByWave = waveHistory.map(w => {
-      const waveFindingsList = w.findings
-        .map(f => `  - [confidence: ${f.confidence.toFixed(1)}] ${f.content}`)
-        .join('\n');
-      return `Wave ${w.waveNumber} (${w.findings.length} new findings):\n${waveFindingsList}`;
-    }).join('\n\n');
+    const contentSection = hasGraph
+      ? graphView
+      : waveHistory.map(w => {
+          const waveFindingsList = w.findings
+            .map(f => `  - [confidence: ${f.confidence.toFixed(1)}] ${f.content}`)
+            .join('\n');
+          return `Wave ${w.waveNumber} (${w.findings.length} new findings):\n${waveFindingsList}`;
+        }).join('\n\n');
 
     const userMessage = `Original request: ${request}
 
 Investigation spanned ${waveHistory.length} waves with ${findings.length} total findings.
 
-${findingsByWave}
+${contentSection}
 
 Synthesize these findings into a comprehensive response.`;
 

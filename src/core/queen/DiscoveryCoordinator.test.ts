@@ -84,6 +84,8 @@ describe('DiscoveryCoordinator', () => {
 
     // After wave 1, LLM decides "sufficient"
     const mockProvider = createMockProvider([
+      // Graph extraction after wave 1 (no entities found)
+      { content: JSON.stringify({ entities: [], relationships: [] }) },
       // planNextWave response
       { content: JSON.stringify({ action: 'sufficient', reasoning: 'We have enough information' }) },
     ]);
@@ -134,6 +136,8 @@ describe('DiscoveryCoordinator', () => {
     const mockPool = createMockWorkerPool([wave1Results, wave2Results]);
 
     const mockProvider = createMockProvider([
+      // Graph extraction after wave 1
+      { content: JSON.stringify({ entities: [], relationships: [] }) },
       // After wave 1: continue with new tasks
       {
         content: JSON.stringify({
@@ -142,6 +146,8 @@ describe('DiscoveryCoordinator', () => {
           tasks: [{ id: 'follow-1', description: 'Investigate X deeper', successCriteria: 'Find details about X' }],
         }),
       },
+      // Graph extraction after wave 2
+      { content: JSON.stringify({ entities: [], relationships: [] }) },
       // After wave 2: sufficient
       {
         content: JSON.stringify({ action: 'sufficient', reasoning: 'Thorough understanding achieved' }),
@@ -194,6 +200,8 @@ describe('DiscoveryCoordinator', () => {
     ]);
 
     const mockProvider = createMockProvider([
+      // Graph extraction after wave 1
+      { content: JSON.stringify({ entities: [], relationships: [] }) },
       // After wave 1: continue
       {
         content: JSON.stringify({
@@ -202,7 +210,9 @@ describe('DiscoveryCoordinator', () => {
           tasks: [{ id: 't2', description: 'More research', successCriteria: 'Find more' }],
         }),
       },
-      // After wave 2: would continue, but maxWaves=2 stops us
+      // Graph extraction after wave 2
+      { content: JSON.stringify({ entities: [], relationships: [] }) },
+      // After wave 2: would continue, but maxWaves=2 stops us (this won't be called)
       {
         content: JSON.stringify({
           action: 'continue',
@@ -245,6 +255,8 @@ describe('DiscoveryCoordinator', () => {
     const mockPool = createMockWorkerPool([wave1Results, wave2Results]);
 
     const mockProvider = createMockProvider([
+      // Graph extraction after wave 1
+      { content: JSON.stringify({ entities: [], relationships: [] }) },
       // After wave 1: continue
       {
         content: JSON.stringify({
@@ -253,6 +265,8 @@ describe('DiscoveryCoordinator', () => {
           tasks: [{ id: 't2', description: 'More research', successCriteria: 'Find more' }],
         }),
       },
+      // Graph extraction after wave 2
+      { content: JSON.stringify({ entities: [], relationships: [] }) },
       // After wave 2: sufficient
       {
         content: JSON.stringify({ action: 'sufficient', reasoning: 'Done' }),
@@ -284,5 +298,89 @@ describe('DiscoveryCoordinator', () => {
     expect(contents).toContain('Fire is hot');
     // No duplicates
     expect(new Set(contents).size).toBe(contents.length);
+  });
+
+  it('builds knowledge graph across waves and uses it for context injection', async () => {
+    const wave1Results = new Map<string, TaskResult>();
+    wave1Results.set('w1-t1', makeTaskResult(
+      'Found info\n## KEY FINDINGS\n- Acme Corp was founded by Jane Doe\n- Acme is based in Berlin',
+      ['Acme Corp was founded by Jane Doe', 'Acme is based in Berlin'],
+    ));
+
+    const wave2Results = new Map<string, TaskResult>();
+    wave2Results.set('w2-follow-1', makeTaskResult(
+      'More details\n## KEY FINDINGS\n- Acme raised $50M',
+      ['Acme raised $50M'],
+    ));
+
+    const mockPool = createMockWorkerPool([wave1Results, wave2Results]);
+
+    const mockProvider = createMockProvider([
+      // Graph extraction after wave 1
+      {
+        content: JSON.stringify({
+          entities: [
+            { name: 'Acme Corp', type: 'organization', properties: { hq: 'Berlin' }, confidence: 0.8 },
+            { name: 'Jane Doe', type: 'person', properties: { role: 'founder' }, confidence: 0.9 },
+          ],
+          relationships: [
+            { source: 'Jane Doe', target: 'Acme Corp', predicate: 'founded', evidence: 'Jane Doe founded Acme', weight: 0.9 },
+          ],
+        }),
+      },
+      // planNextWave after wave 1: continue
+      {
+        content: JSON.stringify({
+          action: 'continue',
+          reasoning: 'Need funding details',
+          tasks: [{ id: 'follow-1', description: 'Research Acme funding', successCriteria: 'Find funding rounds' }],
+        }),
+      },
+      // Graph extraction after wave 2
+      {
+        content: JSON.stringify({
+          entities: [
+            { name: 'Acme Corp', type: 'organization', properties: { funding: '$50M' }, confidence: 0.85 },
+          ],
+          relationships: [],
+        }),
+      },
+      // planNextWave after wave 2: sufficient
+      {
+        content: JSON.stringify({ action: 'sufficient', reasoning: 'Have enough info' }),
+      },
+      // Aggregation
+      {
+        content: 'Comprehensive synthesis of Acme Corp findings.',
+      },
+    ]);
+
+    const coordinator = new DiscoveryCoordinator({
+      provider: mockProvider as any,
+      workerPool: mockPool as any,
+      config: defaultConfig(),
+    });
+
+    const plan: TaskPlan = {
+      type: 'decomposed',
+      reasoning: 'Investigate Acme Corp',
+      tasks: [makeTask('t1', 'Research Acme Corp')],
+      discoveryMode: true,
+    };
+
+    const result = await coordinator.execute('Tell me about Acme Corp', plan, { eventHandler });
+
+    expect(result.waveCount).toBe(2);
+    expect(result.findings).toHaveLength(3);
+
+    // Verify graph extraction was called (LLM calls: extraction1, planWave1, extraction2, planWave2, aggregate)
+    expect(mockProvider.chat).toHaveBeenCalledTimes(5);
+
+    // Verify wave 2 tasks received graph context via dependencyResults
+    const wave2Call = mockPool.executeTasks.mock.calls[1][0] as Task[];
+    const discoveryContext = wave2Call[0].dependencyResults?.get('discovery-context') ?? '';
+    expect(discoveryContext).toContain('Acme Corp');
+    expect(discoveryContext).toContain('Jane Doe');
+    expect(discoveryContext).toContain('Knowledge Graph');
   });
 });
