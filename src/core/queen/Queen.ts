@@ -33,6 +33,43 @@ const STREAM_TIMEOUT_MS = 60_000; // 60s per-chunk timeout for streaming
 const PLANNER_SKILL_CONTEXT_LIMIT = 1500;
 
 /**
+ * Internal tool definition for delegate_tasks — included in LLM tool list
+ * alongside MCP tools, but intercepted in executeToolCalls() before MCP dispatch.
+ */
+const DELEGATE_TASKS_TOOL: ToolDefinition = {
+  name: 'delegate_tasks',
+  description: 'Spawn parallel worker agents to execute tasks concurrently. Each worker iterates with external verification until objectively complete. Use when you need to research multiple topics, investigate from different angles, or do parallel work that benefits from independent verification. Set discoveryMode to true for investigative research that may need multiple follow-up waves.',
+  parameters: {
+    type: 'object',
+    properties: {
+      tasks: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            description: { type: 'string', description: 'What the worker should do' },
+            successCriteria: { type: 'string', description: 'How to verify the task is complete' },
+          },
+          required: ['description', 'successCriteria'],
+        },
+        description: 'Tasks to execute in parallel (1-10)',
+        minItems: 1,
+        maxItems: 10,
+      },
+      discoveryMode: {
+        type: 'boolean',
+        description: 'Run multi-wave progressive discovery with follow-up waves based on findings. Use for deep research on a person, company, or topic.',
+      },
+      background: {
+        type: 'boolean',
+        description: 'Execute workers in background. Returns immediately with a delegation ID. Results injected into context when workers complete.',
+      },
+    },
+    required: ['tasks'],
+  },
+};
+
+/**
  * Wraps an async iterable with a per-chunk timeout. If no chunk arrives
  * within `timeoutMs`, the iteration throws a timeout error.
  */
@@ -408,7 +445,8 @@ export class Queen {
    * Handle a simple request directly with MCP tool support and skill context
    */
   private async handleDirectRequest(userMessage: string): Promise<{ content: string; tokenUsage?: TokenUsage }> {
-    const tools = this.mcpServer?.getToolDefinitions();
+    const mcpTools = this.mcpServer?.getToolDefinitions() ?? [];
+    const tools = [...mcpTools, DELEGATE_TASKS_TOOL];
     const messages = this.prepareDirectMessages(this.memory.getContextMessages(), tools);
 
     try {
@@ -428,7 +466,7 @@ export class Queen {
   private async executeDirectRequest(
     messages: Message[],
     tools: ToolDefinition[] | undefined,
-    maxToolRounds: number = 5,
+    maxToolRounds: number = 10,
   ): Promise<{ content: string; tokenUsage?: TokenUsage }> {
     const log = getDebugLogger();
     const trackedProvider = isTrackedProvider(this.provider)
@@ -465,8 +503,14 @@ export class Queen {
           : { ...response.tokenUsage };
       }
 
-      // No tool calls or no MCP server — we're done
-      if (!response.toolCalls || response.toolCalls.length === 0 || !this.mcpServer) {
+      // No tool calls — we're done
+      if (!response.toolCalls || response.toolCalls.length === 0) {
+        break;
+      }
+
+      // No MCP server and no delegate_tasks calls — we're done
+      const hasDelegateTasks = response.toolCalls.some(tc => tc.name === 'delegate_tasks');
+      if (!this.mcpServer && !hasDelegateTasks) {
         break;
       }
 
@@ -1116,7 +1160,8 @@ ${taskResultsSection}${failedSection}
       // Plan the task (with same planOptions as processMessage)
       this.emitPhaseChange('planning', 'Analyzing and planning task...');
       let conversationContext = this.buildConversationContext();
-      const tools = this.mcpServer?.getToolDefinitions();
+      const mcpTools = this.mcpServer?.getToolDefinitions() ?? [];
+      const tools = [...mcpTools, DELEGATE_TASKS_TOOL];
 
       // Query relevant memories and prepend to conversation context
       const memoryContext = await this.queryRelevantMemories(userMessage);
@@ -1126,8 +1171,8 @@ ${taskResultsSection}${failedSection}
       }
 
       const planOptions = {
-        toolNames: tools?.map(t => t.name),
-        toolDescriptions: tools?.map(t => t.description),
+        toolNames: mcpTools?.map(t => t.name),
+        toolDescriptions: mcpTools?.map(t => t.description),
         skillContext: this.currentSkillContext
           ? `Skill: ${this.currentSkillContext.name}\n${this.currentSkillContext.instructions.slice(0, PLANNER_SKILL_CONTEXT_LIMIT)}`
           : undefined,
@@ -1167,7 +1212,7 @@ ${taskResultsSection}${failedSection}
         let currentMessages = [...messages];
         let allStreamedText = ''; // Accumulates text across all tool rounds
         let toolRound = 0;
-        const maxToolRounds = 5;
+        const maxToolRounds = 10;
         let continueStreaming = true;
 
         while (continueStreaming && toolRound <= maxToolRounds) {
@@ -1193,7 +1238,8 @@ ${taskResultsSection}${failedSection}
           }
 
           // No tool calls — streaming is complete
-          if (pendingToolCalls.length === 0 || !this.mcpServer) {
+          const hasDelegateTasksCalls = pendingToolCalls.some(tc => tc.name === 'delegate_tasks');
+          if (pendingToolCalls.length === 0 || (!this.mcpServer && !hasDelegateTasksCalls)) {
             continueStreaming = false;
             break;
           }

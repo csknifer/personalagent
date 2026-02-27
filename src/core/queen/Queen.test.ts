@@ -138,6 +138,35 @@ describe('Queen', () => {
     });
   });
 
+  describe('delegate_tasks tool registration', () => {
+    it('includes delegate_tasks in tool definitions sent to LLM', async () => {
+      const provider = new MockProvider({
+        responses: [
+          // TaskPlanner.plan() → direct
+          JSON.stringify({ type: 'direct', reasoning: 'Simple' }),
+          // handleDirectRequest chat() → simple response
+          'Hello!',
+        ],
+        supportsTools: true,
+      });
+
+      const mcpServer = new MockMCPServer({
+        toolDefinitions: [
+          { name: 'web_search', description: 'Search', parameters: {} },
+        ],
+      });
+
+      const { queen } = createTestQueen({ provider, mcpServer });
+      await queen.processMessage('Hi');
+
+      // The direct request chat call is the 2nd call (1st is planning)
+      const directCall = provider.chatCalls[1];
+      const toolNames = directCall?.options?.tools?.map((t: any) => t.name) ?? [];
+      expect(toolNames).toContain('delegate_tasks');
+      expect(toolNames).toContain('web_search');
+    });
+  });
+
   describe('processMessage() — delegate_tasks interception', () => {
     it('intercepts delegate_tasks tool call and dispatches to DelegateTasksHandler', async () => {
       const provider = new MockProvider({
