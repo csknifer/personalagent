@@ -49,7 +49,7 @@ ${toolDescriptions}
 ${researchStrategy}
 ${codeStrategy}
 - **Always use tools** when they can provide specific, current data. Don't refuse to try a tool when one is available.
-- If a tool call fails, try different parameters or an alternative tool. If multiple tools fail, try different search terms or alternative sources.
+${hasFetchUrl && hasShell ? `- **Web requests**: Always use \`fetch_url\` for HTTP requests, not \`execute_command\` with curl/wget. \`fetch_url\` handles encoding, timeouts, and error reporting automatically.\n` : ''}- If a tool call fails, try different parameters or an alternative tool. If multiple tools fail, try different search terms or alternative sources.
 
 ## CRITICAL: Data Integrity
 - ONLY present data that came from actual tool results. NEVER fabricate, invent, or hallucinate data.
