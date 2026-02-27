@@ -8,6 +8,8 @@ import {
 } from './RalphLoop.js';
 import { MockProvider, MockMCPServer } from '../../test/helpers.js';
 import type { Task, TaskResult, Verification, DimensionalVerification, CriterionScore } from '../types.js';
+import { BudgetGuard } from '../cost/BudgetGuard.js';
+import { CostRegistry } from '../cost/CostRegistry.js';
 import { getProgressTracker } from '../progress/ProgressTracker.js';
 
 function createTask(overrides: Partial<Task> = {}): Task {
@@ -1343,6 +1345,43 @@ describe('RalphLoop budget awareness', () => {
     expect(result.success).toBe(true);
     // recordCost should NOT be called when costRegistry is absent
     expect(recordCostSpy).not.toHaveBeenCalled();
+  });
+
+  it('should exit early when real cost recording exhausts budget via CostRegistry', async () => {
+    // Use a provider name/model with known pricing so CostRegistry calculates real costs
+    const realProvider = new MockProvider({
+      name: 'openai',
+      model: 'gpt-4o',
+      defaultTokenUsage: { input: 10, output: 20, total: 30 },
+    });
+
+    const budgetGuard = new BudgetGuard({ maxCostPerRequest: 0.0003 });
+    const costRegistry = new CostRegistry();
+
+    // Per iteration cost: (10/1M * 2.50) + (20/1M * 10.0) = 0.000225
+    // After iter 1: spent = 0.000225, not exhausted
+    // After iter 2: spent = 0.00045, exhausted → iteration 3 blocked
+    realProvider.responses = [
+      'Partial answer iteration 1',
+      JSON.stringify({ complete: false, confidence: 0.3, feedback: 'Need more' }),
+      'Partial answer iteration 2',
+      JSON.stringify({ complete: false, confidence: 0.4, feedback: 'Still need more' }),
+      // Should not reach iteration 3
+      'Should not reach this',
+      JSON.stringify({ complete: true, confidence: 0.9, feedback: '' }),
+    ];
+
+    const task = createTask();
+    const result = await ralphLoop(realProvider, task, {
+      maxIterations: 10,
+      timeout: 10000,
+      budgetGuard,
+      costRegistry,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.exitReason).toBe('budget_exhausted');
+    expect(result.iterations).toBe(2);
   });
 });
 
