@@ -11,7 +11,6 @@ import type { SkillLoader } from '../../skills/SkillLoader.js';
 import type { SkillTracker } from '../../skills/SkillTracker.js';
 import type { HistoryManager } from '../../core/HistoryManager.js';
 import type { StrategyStore } from '../../core/queen/StrategyStore.js';
-import type { MemoryStore } from '../../core/memory/MemoryStore.js';
 import { Queen } from '../../core/queen/Queen.js';
 import { getProgressTracker } from '../../core/progress/ProgressTracker.js';
 import { formatRequestSummary } from '../../core/progress/formatRequestSummary.js';
@@ -26,7 +25,6 @@ interface UseQueenOptions {
   skillTracker?: SkillTracker;
   historyManager?: HistoryManager;
   strategyStore?: StrategyStore;
-  memoryStore?: MemoryStore;
   onError?: (error: Error) => void;
   onWorkerStateChange?: (workerId: string, state: WorkerState) => void;
 }
@@ -54,7 +52,6 @@ export function useQueen({
   skillTracker,
   historyManager,
   strategyStore,
-  memoryStore,
   onError,
   onWorkerStateChange,
 }: UseQueenOptions): UseQueenReturn {
@@ -80,7 +77,6 @@ export function useQueen({
       config,
       skillLoader,
       strategyStore,
-      memoryStore,
       onEvent: handleAgentEvent,
     });
     queenRef.current = queen;
@@ -128,7 +124,7 @@ export function useQueen({
       queen.shutdown();
       getShutdownManager().unregister('queen');
     };
-  }, [queenProvider, workerProvider, mcpServer, config, skillLoader, historyManager, strategyStore, memoryStore]);
+  }, [queenProvider, workerProvider, mcpServer, config, skillLoader, historyManager, strategyStore]);
 
   // --- Throttled event handling ---
   // Buffer high-frequency updates and flush to React state at most every 250ms

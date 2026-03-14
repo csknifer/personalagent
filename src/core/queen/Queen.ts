@@ -10,7 +10,6 @@ import { StrategyStore } from './StrategyStore.js';
 import { DiscoveryCoordinator } from './DiscoveryCoordinator.js';
 import { DelegateTasksHandler } from './DelegateTasksHandler.js';
 import type { DelegateTasksInput } from './DelegateTasksHandler.js';
-import type { MemoryStore } from '../memory/MemoryStore.js';
 import type { LLMProvider, ToolDefinition, ToolCall, TrackedChatOptions, StreamChunk } from '../../providers/index.js';
 import { isTrackedProvider, wrapWithTracking } from '../../providers/index.js';
 import type { ResolvedConfig } from '../../config/types.js';
@@ -102,7 +101,6 @@ interface QueenOptions {
   systemPrompt?: string;
   onEvent?: AgentEventHandler;
   strategyStore?: StrategyStore;
-  memoryStore?: MemoryStore;
 }
 
 export class Queen {
@@ -117,7 +115,6 @@ export class Queen {
   private currentSkillContext?: { name: string; instructions: string; resources?: Map<string, string> };
   private toolTracker: ToolEffectivenessTracker = new ToolEffectivenessTracker();
   private strategyStore?: StrategyStore;
-  private memoryStore?: MemoryStore;
   private discoveryCoordinator?: DiscoveryCoordinator;
   private delegateHandler!: DelegateTasksHandler;
 
@@ -132,7 +129,6 @@ export class Queen {
     });
     this.eventHandler = options.onEvent;
     this.strategyStore = options.strategyStore;
-    this.memoryStore = options.memoryStore;
 
     // Create worker pool with worker provider and MCP tools (fallback to queen provider)
     const workerProvider = options.workerProvider || options.provider;

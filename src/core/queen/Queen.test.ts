@@ -16,8 +16,8 @@ import type { AgentEvent } from '../types.js';
 /**
  * Helper: create a Queen with pre-configured mocks.
  * The provider response queue controls the flow:
- *   1st complete() call → TaskPlanner.plan() result
- *   Subsequent chat() calls → direct/aggregation responses
+ *   Each chat() call consumes the next response in order.
+ *   Tool calls are controlled via provider.toolCallsQueue.
  */
 function createTestQueen(options: {
   provider?: MockProvider;

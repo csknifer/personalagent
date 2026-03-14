@@ -75,7 +75,6 @@ export class WebSocketHandler {
       config: bootstrap.config,
       skillLoader: bootstrap.skillLoader ?? undefined,
       strategyStore: bootstrap.strategyStore ?? undefined,
-      memoryStore: bootstrap.memoryStore ?? undefined,
       onEvent: (event) => this.handleAgentEvent(event),
     });
 

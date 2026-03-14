@@ -13,7 +13,6 @@ import type { SkillLoader } from '../skills/SkillLoader.js';
 import type { SkillTracker } from '../skills/SkillTracker.js';
 import type { HistoryManager } from '../core/HistoryManager.js';
 import type { StrategyStore } from '../core/queen/StrategyStore.js';
-import type { MemoryStore } from '../core/memory/MemoryStore.js';
 import { getProgressTracker } from '../core/progress/ProgressTracker.js';
 import { getShutdownManager } from '../core/ShutdownManager.js';
 import type { AgentPhase } from '../core/types.js';
@@ -27,10 +26,9 @@ interface AppProps {
   skillTracker?: SkillTracker | null;
   historyManager?: HistoryManager | null;
   strategyStore?: StrategyStore | null;
-  memoryStore?: MemoryStore | null;
 }
 
-export const App: React.FC<AppProps> = ({ config, queenProvider, workerProvider, mcpServer, skillLoader, skillTracker, historyManager, strategyStore, memoryStore }) => {
+export const App: React.FC<AppProps> = ({ config, queenProvider, workerProvider, mcpServer, skillLoader, skillTracker, historyManager, strategyStore }) => {
   const { exit } = useApp();
   const [error, setError] = useState<string | null>(null);
   const [providerInfo] = useState({
@@ -52,7 +50,6 @@ export const App: React.FC<AppProps> = ({ config, queenProvider, workerProvider,
     skillTracker: skillTracker ?? undefined,
     historyManager: historyManager ?? undefined,
     strategyStore: strategyStore ?? undefined,
-    memoryStore: memoryStore ?? undefined,
     onError: handleError,
   });
 
