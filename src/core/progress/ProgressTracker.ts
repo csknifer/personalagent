@@ -366,6 +366,25 @@ export class ProgressTracker {
   }
 
   /**
+   * Get a compact per-request summary: calls, tokens, duration.
+   * Returns null if no request has been tracked.
+   */
+  getRequestSummary(): { calls: number; tokens: TokenUsage; durationMs: number } | null {
+    const stats = this.state.llmCalls;
+    if (stats.total === 0) return null;
+
+    const durationMs = this.state.startedAt
+      ? Date.now() - this.state.startedAt.getTime()
+      : 0;
+
+    return {
+      calls: stats.total,
+      tokens: { ...stats.totalTokens },
+      durationMs,
+    };
+  }
+
+  /**
    * Get detailed progress report
    */
   getDetailedReport(): string {

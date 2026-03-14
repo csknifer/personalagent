@@ -7,13 +7,14 @@ import type { Message, WorkerState, AgentEvent, AgentPhase, LLMCallStats } from 
 import type { LLMProvider } from '../../providers/index.js';
 import type { MCPServer } from '../../mcp/MCPServer.js';
 import type { ResolvedConfig } from '../../config/types.js';
-import type { SkillLoader, Skill } from '../../skills/SkillLoader.js';
+import type { SkillLoader } from '../../skills/SkillLoader.js';
 import type { SkillTracker } from '../../skills/SkillTracker.js';
 import type { HistoryManager } from '../../core/HistoryManager.js';
 import type { StrategyStore } from '../../core/queen/StrategyStore.js';
 import type { MemoryStore } from '../../core/memory/MemoryStore.js';
 import { Queen } from '../../core/queen/Queen.js';
 import { getProgressTracker } from '../../core/progress/ProgressTracker.js';
+import { formatRequestSummary } from '../../core/progress/formatRequestSummary.js';
 import { getShutdownManager } from '../../core/ShutdownManager.js';
 
 interface UseQueenOptions {
@@ -38,6 +39,7 @@ interface UseQueenReturn {
   reasoning: string | null;
   phase: AgentPhase;
   llmStats: LLMCallStats | null;
+  requestSummary: string | null;
   sendMessage: (content: string) => Promise<void>;
   clearMessages: () => void;
   getWorkerStats: () => { totalWorkers: number; activeWorkers: number; queuedTasks: number; maxWorkers: number };
@@ -65,6 +67,7 @@ export function useQueen({
   const [reasoning, setReasoning] = useState<string | null>(null);
   const [phase, setPhase] = useState<AgentPhase>('idle');
   const [llmStats, setLlmStats] = useState<LLMCallStats | null>(null);
+  const [requestSummary, setRequestSummary] = useState<string | null>(null);
   
   // Create Queen instance
   const queenRef = useRef<Queen | null>(null);
@@ -280,6 +283,7 @@ export function useQueen({
     setIsLoading(true);
     setStreamingContent('');
     setReasoning(null);
+    setRequestSummary(null);
 
     const startTime = Date.now();
 
@@ -374,8 +378,19 @@ export function useQueen({
 
       // Always refresh llmStats at end of request so the header counter updates
       try {
-        const finalStats = getProgressTracker().getLLMCallStats();
+        const tracker = getProgressTracker();
+        const finalStats = tracker.getLLMCallStats();
         setLlmStats(finalStats);
+
+        // Compute per-request cost summary
+        const summary = tracker.getRequestSummary();
+        if (summary) {
+          setRequestSummary(formatRequestSummary({
+            ...summary,
+            provider: queenProvider.name,
+            model: queenProvider.model,
+          }));
+        }
       } catch {
         // Ignore if tracker not available
       }
@@ -416,6 +431,7 @@ export function useQueen({
     reasoning,
     phase,
     llmStats,
+    requestSummary,
     sendMessage,
     clearMessages,
     getWorkerStats,

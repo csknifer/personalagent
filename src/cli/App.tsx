@@ -43,7 +43,7 @@ export const App: React.FC<AppProps> = ({ config, queenProvider, workerProvider,
     setTimeout(() => setError(null), 5000);
   }, []);
 
-  const { messages, isLoading, streamingContent, workers, reasoning, phase, llmStats, sendMessage, clearMessages, getWorkerStats } = useQueen({
+  const { messages, isLoading, streamingContent, workers, reasoning, phase, llmStats, requestSummary, sendMessage, clearMessages, getWorkerStats } = useQueen({
     queenProvider,
     workerProvider,
     mcpServer,
@@ -383,6 +383,13 @@ Skill Usage Statistics:
               llmStats={llmStats ?? undefined}
             />
           )}
+        </Box>
+      )}
+
+      {/* Per-request cost summary — shown after each response */}
+      {requestSummary && !isLoading && (
+        <Box marginTop={0}>
+          <Text color="gray" dimColor>{requestSummary}</Text>
         </Box>
       )}
 
