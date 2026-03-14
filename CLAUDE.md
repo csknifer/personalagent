@@ -35,19 +35,20 @@ This is a **multi-agent CLI chat system** using a hive architecture (Queen/Worke
 
 ```
 User Input → Queen.processMessage() / Queen.streamMessage()
-  → TaskPlanner.plan()
-    ├─ Direct: executeDirectRequest() — up to 5 tool-call rounds with MCP tools
-    └─ Decomposed: WorkerPool → Worker[N] × ralphLoop() → Queen.aggregateResults()
+  → executeDirectRequest() — tool-call loop (up to 10 rounds) with MCP tools + delegate_tasks
+    └─ If Queen calls delegate_tasks:
+       → DelegateTasksHandler → WorkerPool → Worker[N] × ralphLoop()
+       → Results returned as tool result → Queen continues reasoning
 ```
 
-Agent phases: `idle` → `planning` → `executing` → `verifying` → `aggregating` → `idle`. When 2+ workers complete, Queen makes an additional LLM call to synthesize results. Single worker results pass through directly.
+The Queen always enters direct execution with access to MCP tools and a `delegate_tasks` pseudo-tool. The LLM dynamically decides whether to delegate parallel work to workers. `DelegateTasksHandler` supports foreground (blocking) and background (fire-and-forget with result injection) delegation, plus `discoveryMode` for multi-wave investigative research via `DiscoveryCoordinator`.
 
 ### Key Layers
 
 - **`src/cli/`** — React/Ink TUI. `App.tsx` is the root component. `useQueen.ts` hook bridges UI to core.
 - **`src/server/`** — Web UI backend. `WebSocketHandler.ts` bridges browser clients to Queen via WebSocket. `protocol.ts` defines typed client/server message types. Serves static files from `web/dist/` in production. REST: `GET /api/health`, `GET /api/config`. WebSocket at `/ws`.
 - **`web/`** — React + Vite + Tailwind CSS v4 frontend. `useQueenSocket.ts` manages WebSocket with exponential backoff reconnection. Components: `ChatPanel`, `WorkerPanel`, `PhaseIndicator`, `StatsBar`.
-- **`src/core/queen/`** — Orchestrator. `Queen.ts` plans tasks via `TaskPlanner.ts`, manages conversation `Memory.ts`, dispatches to workers, and aggregates results. Skill context is injected as a system message when a skill matches.
+- **`src/core/queen/`** — Orchestrator. `Queen.ts` manages conversation `Memory.ts`, runs the tool-call loop, and delegates to workers via `DelegateTasksHandler.ts`. `DiscoveryCoordinator.ts` handles multi-wave investigative research. Skill context is injected as a system message when a skill matches.
 - **`src/core/worker/`** — Task executors. `WorkerPool.ts` manages concurrency. Each `Worker.ts` runs tasks through `RalphLoop.ts`.
 - **`src/providers/`** — LLM abstraction layer. `LLMProvider` is the abstract base class (`Provider.ts`). Concrete: `GeminiProvider`, `OpenAIProvider`, `AnthropicProvider`, `OllamaProvider`, plus `openai-compatible` (uses OpenAIProvider with custom `baseUrl`). `TrackedProvider` wraps any provider for call analytics via `ProgressTracker`.
 - **`src/mcp/`** — MCP server. Tools: `read_file`, `write_file`, `list_directory`, `file_exists`, `delete_file`, `create_directory`, `web_search` (Tavily), `fetch_url`. File operations sandboxed to `mcp.allowedRoots` (defaults to `cwd()`).

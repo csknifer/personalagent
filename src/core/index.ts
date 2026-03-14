@@ -3,7 +3,7 @@
  */
 
 // Queen exports
-export { Queen, Memory, TaskPlanner } from './queen/index.js';
+export { Queen, Memory } from './queen/index.js';
 
 // Worker exports
 export { 

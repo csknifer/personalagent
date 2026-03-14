@@ -3,33 +3,25 @@
  */
 
 import { Memory } from './Memory.js';
-import { TaskPlanner } from './TaskPlanner.js';
 import { WorkerPool, createWorkerPool } from '../worker/WorkerPool.js';
-import type { Message, Task, TaskPlan, TaskResult, TokenUsage, AgentEvent, AgentEventHandler, WorkerState, AgentPhase, CompletedTaskSummary, EvaluationResult } from '../types.js';
-import { classifyEscalation } from './EscalationClassifier.js';
-import { buildEvaluatorPrompt, parseEvaluationResult } from './ResultEvaluator.js';
-import { shouldSynthesizeWithLLM } from './AggregationHeuristic.js';
+import type { Message, Task, TokenUsage, AgentEvent, AgentEventHandler, WorkerState, AgentPhase } from '../types.js';
 import { ToolEffectivenessTracker } from './ToolEffectivenessTracker.js';
 import { StrategyStore } from './StrategyStore.js';
 import { DiscoveryCoordinator } from './DiscoveryCoordinator.js';
 import { DelegateTasksHandler } from './DelegateTasksHandler.js';
 import type { DelegateTasksInput } from './DelegateTasksHandler.js';
 import type { MemoryStore } from '../memory/MemoryStore.js';
-import type { LLMProvider, ChatOptions, ToolDefinition, ToolCall, TrackedChatOptions, StreamChunk } from '../../providers/index.js';
-import { TrackedProvider, isTrackedProvider, wrapWithTracking } from '../../providers/index.js';
+import type { LLMProvider, ToolDefinition, ToolCall, TrackedChatOptions, StreamChunk } from '../../providers/index.js';
+import { isTrackedProvider, wrapWithTracking } from '../../providers/index.js';
 import type { ResolvedConfig } from '../../config/types.js';
 import type { MCPServer } from '../../mcp/MCPServer.js';
-import type { SkillLoader, Skill } from '../../skills/SkillLoader.js';
+import type { SkillLoader } from '../../skills/SkillLoader.js';
 import { getProgressTracker } from '../progress/ProgressTracker.js';
 import { estimateTokenCount, formatErrorMessage } from '../utils.js';
 import { getDebugLogger } from '../DebugLogger.js';
 import { truncateToolResult, callWithTimeout } from '../worker/RalphLoop.js';
 
 const STREAM_TIMEOUT_MS = 60_000; // 60s per-chunk timeout for streaming
-
-// Skill context is truncated for planner prompts (saves tokens) but passed
-// in full to workers. 1500 chars captures most skill summaries while staying compact.
-const PLANNER_SKILL_CONTEXT_LIMIT = 1500;
 
 /**
  * Internal tool definition for delegate_tasks — included in LLM tool list
@@ -116,7 +108,6 @@ interface QueenOptions {
 export class Queen {
   private provider: LLMProvider;
   private memory: Memory;
-  private taskPlanner: TaskPlanner;
   private workerPool: WorkerPool;
   private mcpServer?: MCPServer;
   private skillLoader?: SkillLoader;
@@ -139,12 +130,6 @@ export class Queen {
       maxMessages: options.config.hive.memory?.maxMessages,
       maxTokens: options.config.hive.memory?.maxTokens,
     });
-    const planningProvider = isTrackedProvider(options.provider)
-      ? options.provider.withPurpose('planning')
-      : wrapWithTracking(options.provider, { defaultPurpose: 'planning' });
-    this.taskPlanner = new TaskPlanner(planningProvider, {
-      adaptiveTimeout: options.config.hive.ralphLoop.adaptiveTimeout,
-    });
     this.eventHandler = options.onEvent;
     this.strategyStore = options.strategyStore;
     this.memoryStore = options.memoryStore;
@@ -166,8 +151,11 @@ export class Queen {
     // Create discovery coordinator if enabled
     const discoveryConfig = options.config.hive.progressiveDiscovery;
     if (discoveryConfig?.enabled) {
+      const discoveryProvider = isTrackedProvider(options.provider)
+        ? options.provider.withPurpose('planning')
+        : wrapWithTracking(options.provider, { defaultPurpose: 'planning' });
       this.discoveryCoordinator = new DiscoveryCoordinator({
-        provider: planningProvider,
+        provider: discoveryProvider,
         workerPool: this.workerPool,
         config: discoveryConfig,
       });
@@ -230,7 +218,7 @@ export class Queen {
     let result: { content: string; tokenUsage?: TokenUsage };
 
     try {
-      result = await this.handleDirectRequest(userMessage);
+      result = await this.handleDirectRequest();
     } catch (error) {
       // Ensure phase resets even on unrecoverable errors
       const cleanMessage = formatErrorMessage(error);
@@ -293,55 +281,6 @@ export class Queen {
   }
 
   /**
-   * Write a memory note summarizing a successful decomposed task outcome.
-   * Fire-and-forget: errors are logged but never propagate.
-   */
-  private async writeTaskMemory(userMessage: string, tasks: Task[], results: Map<string, TaskResult>): Promise<void> {
-    if (!this.memoryStore) return;
-    try {
-      const successful = [...results.values()].filter(r => r.success);
-      if (successful.length === 0) return;
-
-      const keywords = userMessage.toLowerCase().split(/\s+/).filter(w => w.length > 3).slice(0, 5);
-      const taskSummary = tasks.map(t => t.description).join('; ');
-      const id = `task-${Date.now()}`;
-
-      await this.memoryStore.write({
-        id,
-        content: `Request: ${userMessage}\nDecomposition: ${tasks.length} tasks — ${taskSummary}\nOutcome: ${successful.length}/${tasks.length} succeeded.`,
-        tags: ['task-outcome', ...keywords],
-        source: 'queen-aggregation',
-      });
-    } catch (err) {
-      const log = getDebugLogger();
-      log.warn('Queen', `Failed to write task memory: ${String(err)}`);
-    }
-  }
-
-  /**
-   * Query the MemoryStore for notes relevant to the current user message.
-   * Reinforces accessed memories. Returns empty string if nothing found or on error.
-   */
-  private async queryRelevantMemories(userMessage: string): Promise<string> {
-    if (!this.memoryStore) return '';
-    try {
-      const keywords = userMessage.toLowerCase().split(/\s+/).filter(w => w.length > 3).slice(0, 5);
-      if (keywords.length === 0) return '';
-      const memories = await this.memoryStore.queryByTags(keywords);
-      if (memories.length === 0) return '';
-      const top = memories.slice(0, 3);
-      for (const mem of top) {
-        await this.memoryStore.read(mem.id, { reinforce: true });
-      }
-      return top.map(m => m.content).join('\n---\n');
-    } catch (err) {
-      const log = getDebugLogger();
-      log.warn('Queen', `Failed to query memories: ${String(err)}`);
-      return '';
-    }
-  }
-
-  /**
    * Load skill context for the current message if a skill matches
    */
   private async loadSkillContext(userMessage: string): Promise<void> {
@@ -364,7 +303,7 @@ export class Queen {
           content: `Using ${loadedSkill.metadata.name} skill for guidance...` 
         });
       }
-    } catch (error) {
+    } catch {
       // Continue without skill context if loading fails
       this.currentSkillContext = undefined;
     }
@@ -373,7 +312,7 @@ export class Queen {
   /**
    * Handle a simple request directly with MCP tool support and skill context
    */
-  private async handleDirectRequest(userMessage: string): Promise<{ content: string; tokenUsage?: TokenUsage }> {
+  private async handleDirectRequest(): Promise<{ content: string; tokenUsage?: TokenUsage }> {
     const mcpTools = this.mcpServer?.getToolDefinitions() ?? [];
     const tools = [...mcpTools, DELEGATE_TASKS_TOOL];
     const messages = this.prepareDirectMessages(this.memory.getContextMessages(), tools);
@@ -656,443 +595,8 @@ export class Queen {
   }
 
   /**
-   * Handle a complex request by dispatching to workers via WorkerPool.
-   * Supports adaptive replanning: when workers fail mid-flight, the Queen
-   * can classify the failure, cancel dependents, and spawn revised tasks.
-   */
-  private async handleDecomposedRequest(plan: TaskPlan, originalRequest: string): Promise<{ content: string; tokenUsage?: TokenUsage }> {
-    if (!plan.tasks || plan.tasks.length === 0) {
-      return this.handleDirectRequest(originalRequest);
-    }
-
-    // Add skill context to tasks if available
-    if (this.currentSkillContext) {
-      for (const task of plan.tasks) {
-        task.skillContext = {
-          name: this.currentSkillContext.name,
-          instructions: this.currentSkillContext.instructions,
-          resources: this.currentSkillContext.resources,
-        };
-      }
-    }
-
-    // Inject tool effectiveness hints from session history
-    for (const task of plan.tasks) {
-      const pattern = this.toolTracker.classifyTaskPattern(task.description);
-      const hints = this.toolTracker.getHints(pattern);
-      if (hints) {
-        task.toolEffectivenessHints = hints;
-      }
-      // Inject cross-session strategy hints
-      if (this.strategyStore) {
-        const strategyHints = this.strategyStore.buildStrategyHints(pattern);
-        if (strategyHints) {
-          task.strategyHints = strategyHints;
-        }
-      }
-    }
-
-    // Delegate to DiscoveryCoordinator for multi-wave investigative requests
-    if (plan.discoveryMode && this.discoveryCoordinator) {
-      const tools = this.mcpServer?.getToolDefinitions();
-      const discoveryResult = await this.discoveryCoordinator.execute(
-        originalRequest,
-        plan,
-        {
-          eventHandler: (event) => this.emitEvent(event),
-          skillContext: this.currentSkillContext ? {
-            name: this.currentSkillContext.name,
-            instructions: this.currentSkillContext.instructions,
-            resources: this.currentSkillContext.resources,
-          } : undefined,
-          conversationContext: this.buildConversationContext(),
-          toolNames: tools?.map(t => t.name),
-          toolDescriptions: tools?.map(t => t.description),
-        },
-      );
-
-      this.emitPhaseChange('idle');
-      return { content: discoveryResult.content };
-    }
-
-    this.currentTasks = plan.tasks;
-    this.emitEvent({
-      type: 'thinking',
-      content: `Decomposed into ${plan.tasks.length} tasks${this.currentSkillContext ? ` (using ${this.currentSkillContext.name} skill)` : ''}: ${plan.reasoning}`,
-    });
-
-    // Emit worker spawned events for each task
-    for (const task of plan.tasks) {
-      this.emitEvent({ type: 'worker_spawned', workerId: task.id, task });
-    }
-
-    // Replanning state
-    const replanConfig = this.config.hive.replanning;
-    const replanEnabled = replanConfig?.enabled ?? false;
-    const maxReplans = replanConfig?.maxReplans ?? 1;
-    let replanCount = 0;
-    let replanTriggered = false;
-    let replanReason = '';
-    const cancelledTaskIds: string[] = [];
-
-    // All results across original + replanned waves
-    const allResults = new Map<string, TaskResult>();
-    let allTasks = [...plan.tasks];
-
-    const log = getDebugLogger();
-
-    try {
-      // Wire up mid-flight callback for adaptive replanning
-      if (replanEnabled) {
-        this.workerPool.setOnTaskComplete((taskId, result) => {
-          allResults.set(taskId, result);
-
-          if (!result.success && replanCount < maxReplans && !replanTriggered) {
-            // Find dependent tasks for this one
-            const dependentTaskIds = allTasks
-              .filter(t => t.dependencies.includes(taskId))
-              .map(t => t.id);
-
-            const decision = classifyEscalation({
-              result,
-              replanCount,
-              maxReplans,
-              dependentTaskIds,
-            });
-
-            if (decision.action === 'replan') {
-              log.info('Queen', `Escalation: ${decision.reason}`, {
-                taskId,
-                exitReason: result.exitReason,
-                dependentTaskIds,
-              });
-
-              // Cancel dependent tasks immediately
-              for (const depId of dependentTaskIds) {
-                const cancelled = this.workerPool.cancelTask(depId);
-                if (cancelled) {
-                  cancelledTaskIds.push(depId);
-                  log.info('Queen', `Cancelled dependent task ${depId}`);
-                }
-              }
-
-              replanTriggered = true;
-              replanReason = decision.reason;
-            } else if (decision.action === 'accept_partial' || decision.action === 'accept_failure') {
-              log.info('Queen', `Escalation (${decision.action}): ${decision.reason}`, {
-                taskId,
-                exitReason: result.exitReason,
-              });
-            } else if (decision.action === 'retry' || decision.action === 'retry_stronger_model') {
-              // Future: implement retry with backoff / model escalation
-              log.info('Queen', `Escalation (${decision.action}): ${decision.reason} [not yet implemented — treating as pass]`, {
-                taskId,
-                exitReason: result.exitReason,
-              });
-            }
-          }
-        });
-      }
-
-      // Execute original tasks
-      const resultsMap = await this.workerPool.executeTasks(plan.tasks);
-
-      // Merge results
-      // Merge results — callback may have already written some during mid-flight replanning.
-      // Only fill in results that the callback hasn't already captured.
-      for (const [id, result] of resultsMap) {
-        if (!allResults.has(id)) {
-          allResults.set(id, result);
-        }
-      }
-
-      // Update task statuses and emit completion events
-      for (const task of plan.tasks) {
-        const result = allResults.get(task.id);
-        if (result) {
-          task.status = result.success ? 'completed' : 'failed';
-          task.result = result;
-          this.emitEvent({ type: 'worker_completed', workerId: task.id, result });
-        }
-      }
-
-      // --- Adaptive replanning ---
-      if (replanTriggered && replanCount < maxReplans) {
-        replanCount++;
-        log.info('Queen', `Replanning triggered (attempt ${replanCount}/${maxReplans})`, { reason: replanReason });
-        this.emitPhaseChange('replanning', replanReason);
-        this.emitEvent({
-          type: 'replan_triggered',
-          reason: replanReason,
-          replanNumber: replanCount,
-          cancelledTaskIds,
-        });
-
-        // Build summaries for the planner
-        const completedSummaries: CompletedTaskSummary[] = [];
-        const failedSummaries: CompletedTaskSummary[] = [];
-
-        for (const task of allTasks) {
-          const result = allResults.get(task.id);
-          if (!result) continue;
-
-          const summary: CompletedTaskSummary = {
-            taskId: task.id,
-            description: task.description,
-            success: result.success,
-            outputSummary: result.output || '',
-            findings: result.findings,
-            exitReason: result.exitReason,
-            bestScore: result.bestScore,
-            failedTools: result.toolFailures?.map(f => f.tool),
-            failure: result.failure,
-          };
-
-          if (result.success) {
-            completedSummaries.push(summary);
-          } else {
-            failedSummaries.push(summary);
-          }
-        }
-
-        // Get tool info for the replanner
-        const tools = this.mcpServer?.getToolDefinitions();
-
-        const revisedPlan = await this.taskPlanner.replan({
-          originalRequest,
-          failureReason: replanReason,
-          completedTasks: completedSummaries,
-          failedTasks: failedSummaries,
-          cancelledTaskIds,
-          replanNumber: replanCount,
-          conversationContext: this.buildConversationContext(),
-          toolNames: tools?.map(t => t.name),
-          toolDescriptions: tools?.map(t => t.description),
-          skillContext: this.currentSkillContext
-            ? `Skill: ${this.currentSkillContext.name}\n${this.currentSkillContext.instructions.slice(0, PLANNER_SKILL_CONTEXT_LIMIT)}`
-            : undefined,
-        });
-
-        if (revisedPlan.type === 'decomposed' && revisedPlan.tasks && revisedPlan.tasks.length > 0) {
-          // Re-ID new tasks to avoid collisions
-          const newTasks = revisedPlan.tasks.map(t => ({
-            ...t,
-            id: `r${replanCount}-${t.id}`,
-            skillContext: this.currentSkillContext ? {
-              name: this.currentSkillContext.name,
-              instructions: this.currentSkillContext.instructions,
-              resources: this.currentSkillContext.resources,
-            } : undefined,
-          }));
-
-          // Emit worker spawned events for new tasks
-          for (const task of newTasks) {
-            this.emitEvent({ type: 'worker_spawned', workerId: task.id, task });
-          }
-
-          this.emitPhaseChange('executing', `Re-executing ${newTasks.length} revised tasks`);
-
-          // Reset replan trigger for next wave
-          replanTriggered = false;
-
-          // Execute new wave
-          const newResultsMap = await this.workerPool.executeTasks(newTasks);
-
-          // Merge results and emit completion events
-          for (const task of newTasks) {
-            const result = newResultsMap.get(task.id);
-            if (result) {
-              allResults.set(task.id, result);
-              task.status = result.success ? 'completed' : 'failed';
-              task.result = result;
-              this.emitEvent({ type: 'worker_completed', workerId: task.id, result });
-            }
-          }
-
-          allTasks = [...allTasks, ...newTasks];
-        } else {
-          log.info('Queen', 'Replanner returned direct plan — proceeding with partial results');
-        }
-      }
-
-      // Clear the mid-flight callback
-      this.workerPool.setOnTaskComplete(undefined);
-
-      // Build final task-result pairs for aggregation
-      const finalPairs: Array<{ task: Task; result: TaskResult }> = [];
-      for (const task of allTasks) {
-        const result = allResults.get(task.id);
-        if (result) finalPairs.push({ task, result });
-      }
-
-      // Record tool effectiveness for session learning
-      for (const task of allTasks) {
-        const result = allResults.get(task.id);
-        if (result) {
-          const pattern = this.toolTracker.classifyTaskPattern(task.description);
-          this.toolTracker.recordResult(
-            pattern,
-            result.toolsUsed || [],
-            result.toolFailures || [],
-            result.iterations || 0,
-          );
-        }
-      }
-
-      // Persist session tool data to cross-session strategy store
-      if (this.strategyStore) {
-        this.strategyStore.ingestSessionData(this.toolTracker.getAllData());
-      }
-
-      // Aggregate all results
-      return this.aggregateResults(originalRequest, finalPairs);
-    } catch (error) {
-      // Always clean up
-      this.workerPool.setOnTaskComplete(undefined);
-
-      const err = error instanceof Error ? error : new Error(String(error));
-      this.emitEvent({
-        type: 'error',
-        error: `Task execution failed: ${err.message}`,
-      });
-
-      // Fall back to direct handling
-      return this.handleDirectRequest(originalRequest);
-    }
-  }
-
-  /**
-   * Aggregate worker results into a final response
-   */
-  private async aggregateResults(originalRequest: string, taskResults: Array<{ task: Task; result: TaskResult }>): Promise<{ content: string; tokenUsage?: TokenUsage }> {
-    // Sum token usage from all worker results
-    const workerTokens: TokenUsage = { input: 0, output: 0, total: 0 };
-    for (const { result } of taskResults) {
-      if (result.tokenUsage) {
-        workerTokens.input += result.tokenUsage.input;
-        workerTokens.output += result.tokenUsage.output;
-        workerTokens.total += result.tokenUsage.total;
-      }
-    }
-
-    // Filter successful vs failed results
-    // A task is successful if it reported success, even if it produced no prose output
-    // (e.g., tool-only tasks like file writes). Use findings as fallback content.
-    const successful = taskResults.filter(({ result }) => result.success);
-    const failed = taskResults.filter(({ result }) => !result.success);
-
-    if (successful.length === 0) {
-      // Surface partial work and structured errors instead of a generic message
-      const parts: string[] = ['I wasn\'t able to fully complete your request. Here\'s what happened:\n'];
-
-      for (const { task, result } of failed) {
-        parts.push(`**${task.description}**`);
-        if (result.output && result.output.trim()) {
-          parts.push(`Partial output:\n${result.output.trim()}\n`);
-        }
-        if (result.toolFailures && result.toolFailures.length > 0) {
-          parts.push(`Tool errors: ${result.toolFailures.map(f => `${f.tool} (${f.error})`).join(', ')}`);
-        } else if (result.error) {
-          parts.push(`Error: ${result.error}`);
-        }
-        parts.push('');
-      }
-
-      return { content: parts.join('\n'), tokenUsage: workerTokens };
-    }
-
-    if (successful.length === 1 && failed.length === 0) {
-      // Use output, or synthesize from findings if output is empty (tool-only tasks)
-      const output = successful[0].result.output.trim()
-        || (successful[0].result.findings?.length
-          ? successful[0].result.findings.map(f => `- ${f}`).join('\n')
-          : 'Task completed successfully.');
-      return { content: output, tokenUsage: workerTokens };
-    }
-
-    // Conditional aggregation: skip LLM synthesis for disjoint topics
-    if (successful.length >= 2 && failed.length === 0) {
-      const decision = shouldSynthesizeWithLLM(
-        successful.map(({ task, result }) => ({
-          description: task.description,
-          output: result.output,
-          dependencies: task.dependencies,
-        })),
-        this.config.hive.queen.aggregationOverlapThreshold ?? 0.15,
-      );
-      if (!decision.shouldSynthesize) {
-        const log = getDebugLogger();
-        log.info('Queen', `Skipping LLM synthesis: ${decision.reason}`);
-        const content = successful
-          .map(({ task, result }) => `## ${task.description}\n\n${result.output}`)
-          .join('\n\n---\n\n');
-        return { content, tokenUsage: workerTokens };
-      }
-    }
-
-    // Emit aggregating phase
-    this.emitPhaseChange('aggregating', `Synthesizing ${successful.length} task results...`);
-
-    // Build labeled task results — include structured findings when available
-    const taskResultsSection = successful
-      .map(({ task, result }) => {
-        let section = `### Task: ${task.description}\n`;
-        if (result.findings && result.findings.length > 0) {
-          section += `**Key Findings:**\n${result.findings.map(f => `- ${f}`).join('\n')}\n\n`;
-        }
-        section += result.output || '(Completed via tool calls)';
-        return section;
-      })
-      .join('\n\n');
-
-    const failedSection = failed.length > 0
-      ? `\n\n### Failed Tasks\n${failed.map(({ task, result }) => `- **${task.description}**: ${result.error || 'No output produced'}`).join('\n')}`
-      : '';
-
-    const synthesisPrompt = `Synthesize these worker results into a unified response to the user's request.
-
-## Original Request
-${originalRequest}
-
-## Task Results
-${taskResultsSection}${failedSection}
-
-## Synthesis Instructions
-1. **Unified voice**: Write as if one knowledgeable agent answered the entire question. Never reference "workers", "tasks", or "agents".
-2. **Deduplicate**: If multiple results cover the same information, include it once with the best sourcing.
-3. **Resolve conflicts**: If results provide contradictory data, note the discrepancy and explain which source is more authoritative.
-4. **Acknowledge gaps**: If any tasks failed, mention what information is missing rather than silently omitting it.
-5. **Preserve sources**: Keep URLs and references from the results.
-6. **Match format**: Questions → direct answers. Comparisons → structured comparison. Lists → organized lists.`;
-
-    // Use tracked provider for aggregation call
-    const chatOptions: TrackedChatOptions = {
-      purpose: 'aggregation',
-    };
-
-    const trackedProvider = isTrackedProvider(this.provider)
-      ? this.provider.withPurpose('aggregation')
-      : wrapWithTracking(this.provider, { defaultPurpose: 'aggregation' });
-
-    const response = await trackedProvider.chat([
-      { role: 'system', content: 'You are producing a unified response from parallel research results. Write as if you personally gathered all the information. Never reference workers, tasks, or the parallel nature of the research. Maintain factual accuracy — do not add information not present in the results.', timestamp: new Date() },
-      { role: 'user', content: synthesisPrompt, timestamp: new Date() },
-    ], chatOptions);
-
-    // Combine worker + aggregation tokens
-    if (response.tokenUsage) {
-      workerTokens.input += response.tokenUsage.input;
-      workerTokens.output += response.tokenUsage.output;
-      workerTokens.total += response.tokenUsage.total;
-    }
-
-    return { content: response.content, tokenUsage: workerTokens };
-  }
-
-  /**
    * Stream a message response as an async generator of StreamChunks.
-   * For direct requests: streams via provider.chatStream() with tool support.
-   * For decomposed requests: falls back to non-streaming and yields result as a single text chunk.
+   * Streams via provider.chatStream() with tool support including delegate_tasks.
    */
   async *streamMessage(userMessage: string): AsyncGenerator<StreamChunk> {
     // Initialize progress tracker
@@ -1197,7 +701,7 @@ ${taskResultsSection}${failedSection}
         // to prevent duplicate/incoherent messages when the fallback adds its own
         this.memory.truncateTo(messageCountAfterUser);
         this.emitEvent({ type: 'thinking', content: 'Finalizing response...' });
-        const fallbackResult = await this.handleDirectRequest(userMessage);
+        const fallbackResult = await this.handleDirectRequest();
         fullResponse = fallbackResult.content;
         yield { type: 'text', content: fullResponse };
       }
@@ -1238,203 +742,6 @@ ${taskResultsSection}${failedSection}
     });
   }
 
-  /**
-   * Build CompletedTaskSummary[] from tasks with results.
-   * Extracted for reuse across replanning and evaluation flows.
-   */
-  private buildTaskSummaries(tasks: Task[], results: Map<string, TaskResult>): CompletedTaskSummary[] {
-    const summaries: CompletedTaskSummary[] = [];
-    for (const task of tasks) {
-      const result = results.get(task.id);
-      if (!result) continue;
-      summaries.push({
-        taskId: task.id,
-        description: task.description,
-        success: result.success,
-        outputSummary: (result.output || '').slice(0, 500),
-        findings: result.findings,
-        exitReason: result.exitReason,
-        bestScore: result.bestScore,
-        failedTools: result.toolFailures?.map(f => f.tool),
-      });
-    }
-    return summaries;
-  }
-
-  /**
-   * Evaluate a result against the original request using the LLM.
-   * Fail-open: on any error, returns { pass: true } to never block a response.
-   */
-  private async evaluateResult(
-    originalRequest: string,
-    result: string,
-    taskSummaries: CompletedTaskSummary[],
-    threshold: number,
-  ): Promise<EvaluationResult> {
-    const failOpen: EvaluationResult = {
-      pass: true,
-      score: 0.75,
-      feedback: 'Evaluation failed — passing by default',
-      missingAspects: [],
-    };
-
-    try {
-      const prompt = buildEvaluatorPrompt({
-        originalRequest,
-        aggregatedResult: result,
-        taskSummaries,
-      });
-
-      // Use tracked provider with 'evaluation' purpose
-      const trackedProvider = isTrackedProvider(this.provider)
-        ? this.provider.withPurpose('evaluation')
-        : wrapWithTracking(this.provider, { defaultPurpose: 'evaluation' });
-
-      const response = await trackedProvider.complete(prompt);
-      return parseEvaluationResult(response, threshold);
-    } catch (error) {
-      const log = getDebugLogger();
-      log.warn('Queen', `Evaluation LLM call failed: ${error instanceof Error ? error.message : String(error)}`);
-      return failOpen;
-    }
-  }
-
-  /**
-   * Run the Evaluator-Optimizer outer loop on a decomposed result.
-   * If evaluation is disabled or the result passes, returns immediately.
-   * Otherwise, replans targeting gaps and re-executes workers up to maxCycles times.
-   */
-  private async runEvaluationLoop(
-    initialResult: { content: string; tokenUsage?: TokenUsage },
-    originalRequest: string,
-    allTasks: Task[],
-    allResults: Map<string, TaskResult>,
-  ): Promise<{ content: string; tokenUsage?: TokenUsage }> {
-    const evalConfig = this.config.hive.evaluation;
-    if (!evalConfig?.enabled) return initialResult;
-
-    const maxCycles = evalConfig.maxCycles ?? 2;
-    const threshold = evalConfig.passingThreshold ?? 0.7;
-    const log = getDebugLogger();
-
-    let currentResult = initialResult;
-    // Accumulate tasks/results across evaluation cycles
-    let accumulatedTasks = [...allTasks];
-    let accumulatedResults = new Map(allResults);
-
-    for (let cycle = 1; cycle <= maxCycles; cycle++) {
-      // Build summaries from all tasks so far
-      const taskSummaries = this.buildTaskSummaries(accumulatedTasks, accumulatedResults);
-
-      if (taskSummaries.length === 0) {
-        log.debug('Queen', 'Evaluation skipped: no task summaries');
-        return currentResult;
-      }
-
-      // Evaluate
-      this.emitPhaseChange('evaluating', `Evaluating result quality (cycle ${cycle}/${maxCycles})...`);
-      this.emitEvent({ type: 'thinking', content: `Evaluating result quality (cycle ${cycle}/${maxCycles})...` });
-
-      const evaluation = await this.evaluateResult(
-        originalRequest,
-        currentResult.content,
-        taskSummaries,
-        threshold,
-      );
-
-      // Emit evaluation event
-      this.emitEvent({
-        type: 'evaluation_complete',
-        cycleNumber: cycle,
-        score: evaluation.score,
-        pass: evaluation.pass,
-        feedback: evaluation.feedback,
-      });
-
-      log.info('Queen', `Evaluation cycle ${cycle}: score=${(evaluation.score * 100).toFixed(0)}%, pass=${evaluation.pass}`, {
-        feedback: evaluation.feedback,
-        missingAspects: evaluation.missingAspects,
-      });
-
-      // If passing, return current result
-      if (evaluation.pass) {
-        this.emitEvent({ type: 'thinking', content: `Evaluation passed (score: ${(evaluation.score * 100).toFixed(0)}%)` });
-        return currentResult;
-      }
-
-      // Not passing — replan targeting gaps
-      this.emitEvent({ type: 'thinking', content: `Evaluation failed (score: ${(evaluation.score * 100).toFixed(0)}%): ${evaluation.feedback}` });
-      this.emitPhaseChange('replanning', `Addressing evaluation gaps (cycle ${cycle})...`);
-
-      const tools = this.mcpServer?.getToolDefinitions();
-      const revisedPlan = await this.taskPlanner.evaluationReplan({
-        originalRequest,
-        priorResult: currentResult.content,
-        evaluation,
-        cycleNumber: cycle,
-        priorTaskSummaries: taskSummaries,
-        conversationContext: this.buildConversationContext(),
-        toolNames: tools?.map(t => t.name),
-        toolDescriptions: tools?.map(t => t.description),
-        skillContext: this.currentSkillContext
-          ? `Skill: ${this.currentSkillContext.name}\n${this.currentSkillContext.instructions.slice(0, PLANNER_SKILL_CONTEXT_LIMIT)}`
-          : undefined,
-      });
-
-      // If planner returns direct or empty, we can't improve further
-      if (revisedPlan.type !== 'decomposed' || !revisedPlan.tasks || revisedPlan.tasks.length === 0) {
-        log.info('Queen', 'Evaluation replanner returned direct/empty — keeping current result');
-        return currentResult;
-      }
-
-      // Re-ID tasks to avoid collisions
-      const newTasks = revisedPlan.tasks.map(t => ({
-        ...t,
-        id: `eval${cycle}-${t.id}`,
-        skillContext: this.currentSkillContext ? {
-          name: this.currentSkillContext.name,
-          instructions: this.currentSkillContext.instructions,
-          resources: this.currentSkillContext.resources,
-        } : undefined,
-      }));
-
-      // Emit worker spawned events
-      for (const task of newTasks) {
-        this.emitEvent({ type: 'worker_spawned', workerId: task.id, task });
-      }
-
-      this.emitPhaseChange('executing', `Re-executing ${newTasks.length} tasks for evaluation cycle ${cycle}`);
-
-      // Execute new wave
-      const newResultsMap = await this.workerPool.executeTasks(newTasks);
-
-      // Emit completion events and accumulate results
-      for (const task of newTasks) {
-        const result = newResultsMap.get(task.id);
-        if (result) {
-          accumulatedResults.set(task.id, result);
-          task.status = result.success ? 'completed' : 'failed';
-          task.result = result;
-          this.emitEvent({ type: 'worker_completed', workerId: task.id, result });
-        }
-      }
-      accumulatedTasks = [...accumulatedTasks, ...newTasks];
-      // Keep currentTasks in sync so UI and writeTaskMemory see evaluation-phase tasks
-      this.currentTasks = accumulatedTasks;
-
-      // Build final task-result pairs for re-aggregation (all tasks across all waves)
-      const allFinalPairs: Array<{ task: Task; result: TaskResult }> = [];
-      for (const task of accumulatedTasks) {
-        const result = accumulatedResults.get(task.id);
-        if (result) allFinalPairs.push({ task, result });
-      }
-
-      // Re-aggregate
-      currentResult = await this.aggregateResults(originalRequest, allFinalPairs);
-    }
-
-    return currentResult;
-  }
 
   /**
    * Get conversation memory
@@ -1470,12 +777,6 @@ ${taskResultsSection}${failedSection}
    */
   setProvider(provider: LLMProvider): void {
     this.provider = provider;
-    const planningProvider = isTrackedProvider(provider)
-      ? provider.withPurpose('planning')
-      : wrapWithTracking(provider, { defaultPurpose: 'planning' });
-    this.taskPlanner = new TaskPlanner(planningProvider, {
-      adaptiveTimeout: this.config.hive.ralphLoop.adaptiveTimeout,
-    });
   }
 
   /**
