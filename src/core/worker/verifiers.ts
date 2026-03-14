@@ -11,6 +11,7 @@ import type { CostRegistry } from '../cost/CostRegistry.js';
 import { getDebugLogger } from '../DebugLogger.js';
 import { callWithTimeout } from './ralphUtils.js';
 import { parseSuccessCriteria } from './dimensional.js';
+import { SINGLE_VERIFICATION_TEMPLATE, DIMENSIONAL_VERIFICATION_TEMPLATE, interpolateTemplate } from './verificationPrompts.js';
 import type { CriterionScore } from '../types.js';
 
 export interface RalphLoopOptions {
@@ -113,63 +114,21 @@ export class UnifiedVerifier implements Verifier {
   }
 
   private async checkSingle(result: TaskResult): Promise<UnifiedVerificationResult> {
-    const today = new Date().toISOString().split('T')[0];
-    const toolInfo = result.toolsUsed && result.toolsUsed.length > 0
-      ? `Tools used during execution: ${result.toolsUsed.join(', ')}`
-      : 'No tools were used during execution.';
-    const toolOutputInfo = result.toolOutputSummary
-      ? `\n## Tool Output Summary\n${result.toolOutputSummary}\n`
-      : '';
-    const toolFailureInfo = result.toolFailures && result.toolFailures.length > 0
-      ? `\n## ⚠ TOOL FAILURES (programmatically detected — these are facts, not claims)\nThe following tools had ALL calls fail during execution (no successful calls):\n${result.toolFailures.map(f => `- **${f.tool}**: ${f.error}`).join('\n')}\n\nNote: Tools NOT listed here had at least one successful call and may have produced valid data. Only flag data as fabricated if it could ONLY have come from the failed tools listed above.\n`
-      : '';
-
-    const prompt = `Evaluate this task result AND provide strategic next-step guidance if incomplete.
-
-## Current Date
-${today}
-
-## Task Description
-${this.taskDescription || '(not provided)'}
-
-## Success Criteria
-${this.successCriteria || '(not provided)'}
-
-## Tool Usage
-${toolInfo}
-${toolOutputInfo}${toolFailureInfo}
-## Task Result
-${result.output}
-
-## Instructions
-Evaluate the result against EACH criterion in the success criteria. If ANY criterion is not met, mark as incomplete.
-
-If the result is incomplete, also determine the single most impactful next action the worker should take to improve the result. This should be specific and actionable (e.g., "Search for AAPL stock price using a financial data URL" not "try harder").
-
-Respond with JSON:
-{
-  "complete": true/false,
-  "confidence": 0.0-1.0,
-  "feedback": "If not complete, specifically state which criteria failed and what needs to change",
-  "nextAction": "If not complete, the single most impactful next action to take (omit if complete)"
-}
-
-The "confidence" field represents HOW WELL the result meets the criteria (0.0 = completely fails, 1.0 = perfectly meets all criteria).
-- complete=false with confidence=0.1 means "very far from meeting criteria"
-- complete=false with confidence=0.7 means "close but not quite there"
-- complete=true with confidence=0.95 means "fully meets criteria with high quality"
-
-Rules:
-- For code execution, data retrieval, or factual tasks: Be strict — only mark complete if ALL criteria are fully satisfied.
-- For research, analysis, or information-gathering tasks: Mark complete=true if the result provides substantive, well-sourced findings covering the main aspects of the criteria, even if not exhaustive. Good research with real data is better than endless searching for perfection.
-- If the result says "I cannot" or refuses to attempt the task despite having tools, mark INCOMPLETE with LOW confidence.
-- CRITICAL: Check the Tool Output Summary above carefully. If a tool returned actual data (not an error), that data is REAL. Only flag data as fabricated if the specific numbers/facts do NOT appear anywhere in any successful tool output.
-- If a tool output starts with "Error:" that tool call failed. If it starts with data (JSON, text), that tool call SUCCEEDED and its data is valid.
-- Do NOT reject results because dates seem futuristic — check the current date above.
-- Evaluate against the SUCCESS CRITERIA, not your own expectations.
-- Provide specific, actionable feedback — "needs more detail" is not helpful. "Missing price comparison data for competitor B" is.
-- For nextAction: focus on the highest-leverage change. What single thing would most improve the result?
-`;
+    const prompt = interpolateTemplate(SINGLE_VERIFICATION_TEMPLATE, {
+      today: new Date().toISOString().split('T')[0],
+      taskDescription: this.taskDescription || '(not provided)',
+      successCriteria: this.successCriteria || '(not provided)',
+      toolInfo: result.toolsUsed && result.toolsUsed.length > 0
+        ? `Tools used during execution: ${result.toolsUsed.join(', ')}`
+        : 'No tools were used during execution.',
+      toolOutputInfo: result.toolOutputSummary
+        ? `\n## Tool Output Summary\n${result.toolOutputSummary}\n`
+        : '',
+      toolFailureInfo: result.toolFailures && result.toolFailures.length > 0
+        ? `\n## ⚠ TOOL FAILURES (programmatically detected — these are facts, not claims)\nThe following tools had ALL calls fail during execution (no successful calls):\n${result.toolFailures.map(f => `- **${f.tool}**: ${f.error}`).join('\n')}\n\nNote: Tools NOT listed here had at least one successful call and may have produced valid data. Only flag data as fabricated if it could ONLY have come from the failed tools listed above.\n`
+        : '',
+      taskResult: result.output,
+    });
 
     const log = getDebugLogger();
     log.debug('UnifiedVerifier', 'Checking result', { resultLength: result.output.length });
@@ -199,51 +158,18 @@ Rules:
   }
 
   private async checkDimensional(result: TaskResult, criteria: string[]): Promise<UnifiedVerificationResult> {
-    const today = new Date().toISOString().split('T')[0];
-    const criteriaList = criteria.map((c, i) => `${i + 1}. ${c}`).join('\n');
-    const toolOutputInfo = result.toolOutputSummary
-      ? `\n## Tool Output Summary\n${result.toolOutputSummary}\n`
-      : '';
-    const toolFailureInfo = result.toolFailures && result.toolFailures.length > 0
-      ? `\n## ⚠ TOOL FAILURES (programmatically detected — these are facts)\nThe following tools had ALL calls fail (no successful calls):\n${result.toolFailures.map(f => `- **${f.tool}**: ${f.error}`).join('\n')}\nOnly flag data as fabricated if it could ONLY have come from these failed tools. Tools not listed here had at least one successful call.\n`
-      : '';
-
-    const prompt = `Evaluate this task result against EACH criterion independently.
-
-## Current Date
-${today}
-
-## Task Description
-${this.taskDescription || '(not provided)'}
-
-## Task Result
-${result.output}
-${toolOutputInfo}${toolFailureInfo}
-
-## Success Criteria
-${criteriaList}
-
-## Scoring Guide
-- **0.0**: Not attempted at all
-- **0.1-0.3**: Mentioned but largely incomplete or incorrect
-- **0.4-0.6**: Partially addressed with significant gaps
-- **0.7-0.8**: Mostly complete with minor gaps
-- **0.9-1.0**: Fully satisfied with high quality
-
-## Instructions
-For EACH criterion, provide a score and specific, actionable feedback.
-Mark complete=true ONLY if ALL criteria score >= 0.8. Be strict.
-
-IMPORTANT: In the "name" field, use the EXACT criterion text from the numbered list above.
-
-Respond with JSON:
-{
-  "complete": true/false,
-  "feedback": "Overall summary",
-  "dimensions": [
-    { "name": "exact criterion text", "score": 0.0-1.0, "passed": true/false, "feedback": "what specifically is missing or needs improvement" }
-  ]
-}`;
+    const prompt = interpolateTemplate(DIMENSIONAL_VERIFICATION_TEMPLATE, {
+      today: new Date().toISOString().split('T')[0],
+      taskDescription: this.taskDescription || '(not provided)',
+      taskResult: result.output,
+      toolOutputInfo: result.toolOutputSummary
+        ? `\n## Tool Output Summary\n${result.toolOutputSummary}\n`
+        : '',
+      toolFailureInfo: result.toolFailures && result.toolFailures.length > 0
+        ? `\n## ⚠ TOOL FAILURES (programmatically detected — these are facts)\nThe following tools had ALL calls fail (no successful calls):\n${result.toolFailures.map(f => `- **${f.tool}**: ${f.error}`).join('\n')}\nOnly flag data as fabricated if it could ONLY have come from these failed tools. Tools not listed here had at least one successful call.\n`
+        : '',
+      criteriaList: criteria.map((c, i) => `${i + 1}. ${c}`).join('\n'),
+    });
 
     const log = getDebugLogger();
     log.debug('UnifiedVerifier', 'Checking result (dimensional)', { resultLength: result.output.length, criteria: criteria.length });
