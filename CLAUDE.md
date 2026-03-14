@@ -55,7 +55,7 @@ The Queen always enters direct execution with access to MCP tools and a `delegat
 - **`src/skills/`** — Extensible skill system. `SkillLoader` discovers skills from `./skills` and `~/.personalagent/skills`. Built-in skills: `research`, `code-assistant`, `file-organizer`, `git-assistant`, `skill-creator`, `task-planner`. Each skill has a `SKILL.md` and `resources/`. Matching uses keyword triggers from `skill.metadata.triggers`.
 - **`src/config/`** — Multi-layer config: defaults → `~/.personalagent/config.yaml` → `./.personalagent/config.yaml` → custom file → env vars → CLI flags. Schema validated with Zod.
 - **`src/bootstrap.ts`** — Shared initialization for both CLI and web server. Creates all core components and returns a `BootstrapResult`.
-- **`prompts/`** — Overridable system prompts (`queen-system.md`, `worker-system.md`, `task-planning.md`, `research-system.md`). Referenced via `config.prompts` in YAML config.
+- **`prompts/`** — System and verification prompt templates (`worker-system.md`, `research-system.md`, `verification-single.md`, `verification-dimensional.md`). Referenced via `config.prompts` in YAML config.
 
 ### Ralph Loop Pattern
 

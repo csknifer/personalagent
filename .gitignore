@@ -37,6 +37,8 @@ browser-state-*-fingerprint.json
 
 # Agent-generated output files
 debugoutput.txt
+*_summary.md
+*_extraction.md
 
 # Local/personal files
 .claude/settings.local.json
